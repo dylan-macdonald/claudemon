@@ -26,6 +26,9 @@
 #ifdef ENABLE_SCRIPTING
 #include "scripting/ScriptingController.h"
 #endif
+#ifdef USE_CLAUDE
+#include "ClaudeController.h"
+#endif
 
 namespace QGBA {
 
@@ -122,6 +125,10 @@ public slots:
 
 #ifdef ENABLE_SCRIPTING
 	void scriptingOpen();
+#endif
+
+#ifdef USE_CLAUDE
+	void claudeOpen();
 #endif
 
 protected:
@@ -264,6 +271,10 @@ private:
 
 #ifdef ENABLE_SCRIPTING
 	std::unique_ptr<ScriptingController> m_scripting;
+#endif
+
+#ifdef USE_CLAUDE
+	std::unique_ptr<ClaudeController> m_claude;
 #endif
 };
 

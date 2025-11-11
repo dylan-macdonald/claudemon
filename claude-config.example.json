@@ -1,0 +1,9 @@
+{
+  "api_key": "sk-ant-your-api-key-here",
+  "model": "claude-sonnet-4-5-20250929",
+  "max_tokens": 1024,
+  "frames_per_query": 60,
+  "include_screenshot": true,
+  "include_ram": true,
+  "temperature": 1.0
+}

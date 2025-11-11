@@ -62,6 +62,9 @@
 #ifdef ENABLE_SCRIPTING
 #include "scripting/ScriptingView.h"
 #endif
+#ifdef USE_CLAUDE
+#include "ClaudeController.h"
+#endif
 #include "SensorView.h"
 #include "ShaderSelector.h"
 #include "ShortcutController.h"
@@ -663,6 +666,15 @@ void Window::scriptingOpen() {
 	ensureScripting();
 	ScriptingView* view = new ScriptingView(m_scripting.get(), m_config);
 	openView(view);
+}
+#endif
+
+#ifdef USE_CLAUDE
+void Window::claudeOpen() {
+	if (!m_claude) {
+		m_claude = std::make_unique<ClaudeController>(m_controller.get());
+	}
+	openView(m_claude->widget());
 }
 #endif
 
@@ -1761,6 +1773,9 @@ void Window::setupMenu(QMenuBar* menubar) {
 	addGameAction(tr("&Cheats..."), "cheatsWindow", openControllerTView<CheatsView>(), "tools");
 #ifdef ENABLE_SCRIPTING
 	m_actions.addAction(tr("Scripting..."), "scripting", this, &Window::scriptingOpen, "tools");
+#endif
+#ifdef USE_CLAUDE
+	m_actions.addAction(tr("Claude AI Player..."), "claude", this, &Window::claudeOpen, "tools");
 #endif
 
 	m_actions.addAction(tr("Create forwarder..."), "createForwarder", openTView<ForwarderView>(), "tools");

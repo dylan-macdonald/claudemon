@@ -315,6 +315,11 @@ if(ENABLE_SCRIPTING)
 		scripting/AutorunScriptModel.cpp)
 endif()
 
+if(USE_CLAUDE)
+	list(APPEND SOURCE_FILES
+		ClaudeController.cpp)
+endif()
+
 if(TARGET Qt6::Core)
 	qt_add_resources(RESOURCES resources.qrc)
 else()
