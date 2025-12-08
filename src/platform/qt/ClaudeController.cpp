@@ -17,9 +17,13 @@
 #include <QByteArray>
 #include <QRegularExpression>
 #include <QDebug>
+#include <QPixmap>
+#include <QImage>
 
 #include <mgba/core/input.h>
 #include <mgba/gba/input.h>
+#include <mgba/core/core.h>
+#include <mgba/core/thread.h>
 
 using namespace QGBA;
 
@@ -72,17 +76,55 @@ void ClaudeController::stopGameLoop() {
     qDebug() << "Claude game loop stopped";
 }
 
+QByteArray ClaudeController::captureScreenshotData() {
+    if (!m_coreController) {
+        return QByteArray();
+    }
+    
+    QByteArray imageData;
+    QBuffer buffer(&imageData);
+    buffer.open(QIODevice::WriteOnly);
+    
+    // Capture screenshot data from the core
+    m_coreController->threadInterrupt();
+    mCore* core = m_coreController->thread()->core;
+    
+    if (core) {
+        size_t stride;
+        const void* pixels = nullptr;
+        unsigned width, height;
+        
+        core->currentVideoSize(core, &width, &height);
+        core->getPixels(core, &pixels, &stride);
+        
+        if (pixels && width > 0 && height > 0) {
+            // Convert raw pixels to QImage
+            // Assuming RGB565 format (common for GBA)
+            QImage image(static_cast<const uchar*>(pixels), width, height, stride, QImage::Format_RGB16);
+            
+            // Convert to RGB888 for better Claude processing
+            QImage rgb888 = image.convertToFormat(QImage::Format_RGB888);
+            
+            // Save as PNG for API
+            rgb888.save(&buffer, "PNG");
+            
+            qDebug() << "Captured screenshot:" << width << "x" << height << "pixels, size:" << imageData.size() << "bytes";
+        } else {
+            qDebug() << "Failed to get pixel data from core";
+        }
+    }
+    
+    m_coreController->threadContinue();
+    return imageData;
+}
+
 void ClaudeController::captureAndSendScreenshot() {
     if (!m_coreController || !m_running) {
         return;
     }
     
-    // Take screenshot using mGBA's built-in functionality
-    // This will save to the configured screenshot directory
-    // We'll need to capture the image data directly for the API
-    
-    // For now, create a placeholder request to Claude
-    // In a real implementation, we'd capture the actual screen buffer
+    // Capture actual screenshot data
+    QByteArray imageData = captureScreenshotData();
     
     QJsonObject requestBody;
     requestBody["model"] = "claude-3-5-sonnet-20241022";
@@ -102,11 +144,19 @@ void ClaudeController::captureAndSendScreenshot() {
                           "Only respond with the button command, nothing else.";
     content.append(textContent);
     
-    // TODO: Add actual image data here
-    // QJsonObject imageContent;
-    // imageContent["type"] = "image";
-    // imageContent["source"] = imageData;
-    // content.append(imageContent);
+    // Add actual image data if we have it
+    if (!imageData.isEmpty()) {
+        QJsonObject imageContent;
+        imageContent["type"] = "image";
+        
+        QJsonObject source;
+        source["type"] = "base64";
+        source["media_type"] = "image/png";
+        source["data"] = QString(imageData.toBase64());
+        
+        imageContent["source"] = source;
+        content.append(imageContent);
+    }
     
     message["content"] = content;
     messages.append(message);

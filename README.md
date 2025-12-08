@@ -1,270 +1,220 @@
-mGBA
-====
-
-mGBA is an emulator for running Game Boy Advance games. It aims to be faster and more accurate than many existing Game Boy Advance emulators, as well as adding features that other emulators lack. It also supports Game Boy and Game Boy Color games.
-
-Up-to-date news and downloads can be found at [mgba.io](https://mgba.io/).
-
-[![Build status](https://buildbot.mgba.io/badges/build-win32.svg)](https://buildbot.mgba.io)
-[![Translation status](https://hosted.weblate.org/widgets/mgba/-/svg-badge.svg)](https://hosted.weblate.org/engage/mgba)
-
-Features
---------
-
-- Highly accurate Game Boy Advance hardware support[<sup>[1]</sup>](#missing).
-- Game Boy/Game Boy Color hardware support.
-- Fast emulation. Known to run at full speed even on low end hardware, such as netbooks.
-- Qt and SDL ports for a heavy-weight and a light-weight frontend.
-- Local (same computer) link cable support.
-- Save type detection, even for flash memory size[<sup>[2]</sup>](#flashdetect).
-- Support for cartridges with motion sensors and rumble (only usable with game controllers).
-- Real-time clock support, even without configuration.
-- Solar sensor support for Boktai games.
-- Game Boy Camera and Game Boy Printer support.
-- A built-in BIOS implementation, and ability to load external BIOS files.
-- Scripting support using Lua.
-- Turbo/fast-forward support by holding Tab.
-- Rewind by holding Backquote.
-- Frameskip, configurable up to 10.
-- Screenshot support.
-- Cheat code support.
-- 9 savestate slots. Savestates are also viewable as screenshots.
-- Video, GIF, WebP, and APNG recording.
-- e-Reader support.
-- Remappable controls for both keyboards and gamepads.
-- Loading from ZIP and 7z files.
-- IPS, UPS and BPS patch support.
-- Game debugging via a command-line interface and GDB remote support, compatible with Ghidra and IDA Pro.
-- Configurable emulation rewinding.
-- Support for loading and exporting GameShark and Action Replay snapshots.
-- Cores available for RetroArch/Libretro and OpenEmu.
-- Community-provided translations for several languages via [Weblate](https://hosted.weblate.org/engage/mgba).
-- Many, many smaller things.
-
-#### Game Boy mappers
-
-The following mappers are fully supported:
-
-- MBC1
-- MBC1M
-- MBC2
-- MBC3
-- MBC3+RTC
-- MBC30
-- MBC5
-- MBC5+Rumble
-- MBC7
-- M161
-- Wisdom Tree (unlicensed)
-- NT "old type" 1 and 2 (unlicensed multicart)
-- NT "new type" (unlicensed MBC5-like)
-- Pokémon Jade/Diamond (unlicensed)
-- Sachen MMC1 (unlicensed)
-
-The following mappers are partially supported:
-
-- MBC6 (missing flash memory write support)
-- MMM01
-- Pocket Cam
-- TAMA5 (incomplete RTC support)
-- HuC-1 (missing IR support)
-- HuC-3 (missing IR support)
-- Sachen MMC2 (missing alternate wiring support)
-- BBD (missing logo switching)
-- Hitek (missing logo switching)
-- GGB-81 (missing logo switching)
-- Li Cheng (missing logo switching)
-- Sintax (missing logo switching)
-
-### Planned features
-
-- Networked multiplayer link cable support.
-- Dolphin/JOY bus link cable support.
-- MP2k audio mixing, for higher quality sound than hardware.
-- Re-recording support for tool-assist runs.
-- A comprehensive debug suite.
-- Wireless adapter support.
-
-Supported Platforms
--------------------
-
-- Windows 7 or newer
-- OS X 10.9 (Mavericks)[<sup>[3]</sup>](#osxver) or newer
-- Linux
-- FreeBSD
-- Nintendo 3DS
-- Nintendo Switch
-- Wii
-- PlayStation Vita
+# Claudemon 🎮🤖
 
-Other Unix-like platforms, such as OpenBSD, are known to work as well, but are untested and not fully supported.
+**mGBA fork that lets Claude AI play Game Boy Advance games**
 
-### System requirements
+Claudemon is an enhanced version of the mGBA emulator that integrates Claude AI to automatically play games. Watch Claude navigate Pokemon Emerald, make strategic decisions, and learn from the gameplay in real-time.
 
-Requirements are minimal. Any computer that can run Windows Vista or newer should be able to handle emulation. Support for OpenGL 1.1 or newer is also required, with OpenGL 3.2 or newer for shaders and advanced features.
+![Claude Playing Pokemon](https://img.shields.io/badge/Claude-Playing%20Pokemon-brightgreen)
+![mGBA Fork](https://img.shields.io/badge/mGBA-Fork-blue)
+![License](https://img.shields.io/badge/License-MPL%202.0-orange)
 
-Downloads
----------
+## 🌟 Features
 
-Downloads can be found on the official website, in the [Downloads][downloads] section. The source code can be found on [GitHub][source].
+- **🧠 AI-Powered Gameplay**: Claude AI analyzes game screenshots and makes intelligent input decisions
+- **👁️ Real-Time Visualization**: See Claude's reasoning and decision-making process live
+- **🎯 Pokemon Emerald Optimized**: Specifically designed for Pokemon gameplay with context-aware prompts
+- **📊 Input History**: Track all of Claude's actions and button presses with timestamps
+- **🔄 Automated Game Loop**: Continuous screenshot → AI analysis → input injection cycle
+- **⚙️ Simple Setup**: Easy API key configuration through the GUI
 
-Controls
---------
+## 🚀 Quick Start
 
-Controls are configurable in the settings menu. Many game controllers should be automatically mapped by default. The default keyboard controls are as follows:
+### 1. Clone & Setup
 
-- **A**: X
-- **B**: Z
-- **L**: A
-- **R**: S
-- **Start**: Enter
-- **Select**: Backspace
+```bash
+git clone https://github.com/your-username/claudemon.git
+cd claudemon
+```
 
-Compiling
----------
+### 2. Run Setup Script
 
-Compiling requires using CMake 3.1 or newer. GCC, Clang, and Visual Studio 2019 are known to work for compiling mGBA.
+**Linux/macOS/WSL:**
+```bash
+./setup.sh
+```
 
-#### Docker building
+**Windows:**
+```cmd
+setup.bat
+```
 
-The recommended way to build for most platforms is to use Docker. Several Docker images are provided that contain the requisite toolchain and dependencies for building mGBA across several platforms.
+The setup script will:
+- Check for required dependencies (CMake, Qt5/Qt6, build tools)
+- Install missing packages (on supported systems)
+- Build the project automatically
+- Show you where the executable is located
 
-Note: If you are on an older Windows system before Windows 10, you may need to configure your Docker to use VirtualBox shared folders to correctly map your current `mgba` checkout directory to the Docker image's working directory. (See issue [#1985](https://mgba.io/i/1985) for details.)
+### 3. Get Your Claude API Key
 
-To use a Docker image to build mGBA, simply run the following command while in the root of an mGBA checkout:
+1. Visit [Anthropic Console](https://console.anthropic.com/)
+2. Create an account or sign in
+3. Generate an API key
+4. Keep it handy for the next step
 
-	docker run --rm -it -v ${PWD}:/home/mgba/src mgba/windows:w32
+### 4. Run Claudemon
 
-After starting the Docker container, it will produce a `build-win32` directory with the build products. Replace `mgba/windows:w32` with another Docker image for other platforms, which will produce a corresponding other directory. The following Docker images available on Docker Hub:
+```bash
+./build/mgba-qt  # Linux/macOS
+# or
+build\mgba-qt.exe  # Windows
+```
 
-- mgba/3ds
-- mgba/switch
-- mgba/ubuntu:xenial
-- mgba/ubuntu:bionic
-- mgba/ubuntu:focal
-- mgba/ubuntu:groovy
-- mgba/vita
-- mgba/wii
-- mgba/windows:w32
-- mgba/windows:w64
+### 5. Setup Claude Integration
 
-If you want to speed up the build process, consider adding the flag `-e MAKEFLAGS=-jN` to do a parallel build for mGBA with `N` number of CPU cores.
+1. **Load a ROM**: Use `File > Load ROM` to load your Pokemon Emerald ROM
+2. **Open Claude Panel**: Go to `Tools > Claude AI...`
+3. **Enter API Key**: Paste your Claude API key in the text field
+4. **Start the AI**: Click "Start Claude" to begin automated gameplay
 
-#### *nix building
+## 🎮 Using Claudemon
 
-To use CMake to build on a Unix-based system, the recommended commands are as follows:
+### Loading ROMs
 
-	mkdir build
-	cd build
-	cmake -DCMAKE_INSTALL_PREFIX:PATH=/usr ..
-	make
-	sudo make install
+Place your ROM files in the `roms/` directory:
 
-This will build and install mGBA into `/usr/bin` and `/usr/lib`. Dependencies that are installed will be automatically detected, and features that are disabled if the dependencies are not found will be shown after running the `cmake` command after warnings about being unable to find them.
+```
+claudemon/
+├── roms/
+│   ├── pokemon_emerald.gba    ← Your ROM files go here
+│   ├── pokemon_ruby.gba
+│   └── other_games.gba
+```
 
-If you are on macOS, the steps are a little different. Assuming you are using the homebrew package manager, the recommended commands to obtain the dependencies and build are:
+**Legal Notice**: You must own legal copies of any games you emulate. This project does not provide ROM files.
 
-	brew install cmake ffmpeg libzip qt5 sdl2 libedit lua pkg-config
-	mkdir build
-	cd build
-	cmake -DCMAKE_PREFIX_PATH=`brew --prefix qt5` ..
-	make
+### Claude AI Controls
 
-Note that you should not do a `make install` on macOS, as it will not work properly.
+The Claude AI panel provides:
 
-#### Windows developer building
+- **🔑 API Key Input**: Secure API key configuration
+- **▶️ Start/Stop**: Control the automated gameplay loop
+- **💭 Reasoning Display**: See Claude's thought process in real-time
+- **📝 Input History**: Track all button presses with timestamps
+- **📊 Status Monitor**: Loop count and current action tracking
 
-##### MSYS2
+### How It Works
 
-To build on Windows for development, using MSYS2 is recommended. Follow the installation steps found on their [website](https://msys2.github.io). Make sure you're running the 32-bit version ("MSYS2 MinGW 32-bit") (or the 64-bit version "MSYS2 MinGW 64-bit" if you want to build for x86_64) and run this additional command (including the braces) to install the needed dependencies (please note that this involves downloading over 1100MiB of packages, so it will take a long time):
+1. **Screenshot Capture**: Claudemon captures the game screen at 2-second intervals
+2. **AI Analysis**: Screenshots are sent to Claude with Pokemon-specific prompts
+3. **Input Generation**: Claude responds with button commands (`a`, `up 3`, `start`, etc.)
+4. **Action Execution**: Commands are injected directly into the emulator
+5. **Continuous Loop**: Process repeats automatically
 
-	pacman -Sy --needed base-devel git ${MINGW_PACKAGE_PREFIX}-{cmake,ffmpeg,gcc,gdb,libelf,libepoxy,libzip,lua,pkgconf,qt5,SDL2,ntldd-git}
+## 🔧 Configuration
 
-Check out the source code by running this command:
+### Supported Input Commands
 
-	git clone https://github.com/mgba-emu/mgba.git
+Claude can send these commands:
+- `a`, `b` - Action buttons
+- `l`, `r` - Shoulder buttons  
+- `start`, `select` - Menu buttons
+- `up`, `down`, `left`, `right` - D-pad directions
+- `up 3`, `a 5` - Repeat commands (press button multiple times)
 
-Then finally build it by running these commands:
+### Game Loop Settings
 
-	mkdir -p mgba/build
-	cd mgba/build
-	cmake .. -G "MSYS Makefiles"
-	make -j$(nproc --ignore=1)
+- **Loop Interval**: 2 seconds between actions (configurable in code)
+- **API Model**: Uses Claude 3.5 Sonnet for optimal game understanding
+- **Max Tokens**: 300 tokens per response for quick decisions
 
-Please note that this build of mGBA for Windows is not suitable for distribution, due to the scattering of DLLs it needs to run, but is perfect for development. However, if distributing such a build is desired (e.g. for testing on machines that don't have the MSYS2 environment installed), running `cpack -G ZIP` will prepare a zip file with all of the necessary DLLs.
+## 🛠️ Development
 
-##### Visual Studio
+### Building from Source
 
-To build using Visual Studio is a similarly complicated setup. To begin you will need to install [vcpkg](https://github.com/Microsoft/vcpkg). After installing vcpkg you will need to install several additional packages:
+#### Dependencies
 
-    vcpkg install ffmpeg[vpx,x264] libepoxy libpng libzip lua sdl2 sqlite3
+- **CMake** 3.12+
+- **Qt5** or **Qt6** (Core, Widgets, Network, Multimedia)
+- **C++ Compiler** (GCC, Clang, or MSVC)
+- **libpng**, **zlib**
+- **SDL2** (optional)
 
-Note that this installation won't support hardware accelerated video encoding on Nvidia hardware. If you care about this, you'll need to install CUDA beforehand, and then substitute `ffmpeg[vpx,x264,nvcodec]` into the previous command.
+#### Manual Build
 
-You will also need to install Qt. Unfortunately due to Qt being owned and run by an ailing company as opposed to a reasonable organization there is no longer an offline open source edition installer for the latest version, so you'll need to either fall back to an [old version installer](https://download.qt.io/archive/qt/5.12/5.12.9/qt-opensource-windows-x86-5.12.9.exe) (which wants you to create an otherwise-useless account, but you can bypass temporarily setting an invalid proxy or otherwise disabling networking), use the online installer (which requires an account regardless), or use vcpkg to build it (slowly). None of these are great options. For the installer you'll want to install the applicable MSVC versions. Note that the offline installers do not support MSVC 2019. For vcpkg you'll want to install it as such, which will take quite a while, especially on quad core or less computers:
+```bash
+mkdir build && cd build
+cmake -DCMAKE_BUILD_TYPE=RelWithDebInfo ..
+make -j$(nproc)
+```
 
-    vcpkg install qt5-base qt5-multimedia
+### Project Structure
 
-Next, open Visual Studio, select Clone Repository, and enter `https://github.com/mgba-emu/mgba.git`. When Visual Studio is done cloning, go to File > CMake and open the CMakeLists.txt file at the root of the checked out repository. From there, mGBA can be developed in Visual Studio similarly to other Visual Studio CMake projects.
+```
+src/platform/qt/
+├── ClaudeController.h/cpp    # AI integration & API communication
+├── ClaudeView.h/cpp         # User interface for Claude controls
+└── Window.h/cpp             # Main window integration
 
-#### Toolchain building
+include/mgba/core/
+└── core.h                   # Screenshot capture integration
+```
 
-If you have devkitARM (for 3DS), devkitPPC (for Wii), devkitA64 (for Switch), or vitasdk (for PS Vita), you can use the following commands for building:
+### Key Integration Points
 
-	mkdir build
-	cd build
-	cmake -DCMAKE_TOOLCHAIN_FILE=../src/platform/3ds/CMakeToolchain.txt ..
-	make
+- **Screenshot Capture**: Uses mGBA's `core->getPixels()` for real framebuffer access
+- **Input Injection**: Direct integration with mGBA's input system
+- **Qt Integration**: Native Qt widgets following mGBA's UI patterns
 
-Replace the `-DCMAKE_TOOLCHAIN_FILE` parameter for the following platforms:
+## 🔍 Troubleshooting
 
-- 3DS: `../src/platform/3ds/CMakeToolchain.txt`
-- Switch: `../src/platform/switch/CMakeToolchain.txt`
-- Vita: `../src/platform/psp2/CMakeToolchain.vitasdk`
-- Wii: `../src/platform/wii/CMakeToolchain.txt`
+### Common Issues
 
-### Dependencies
+**"Build failed" during setup:**
+- Check that all dependencies are installed
+- Try running the setup script again
+- See the build output for specific error messages
 
-mGBA has no hard dependencies, however, the following optional dependencies are required for specific features. The features will be disabled if the dependencies can't be found.
+**"Network error" when starting Claude:**
+- Verify your API key is correct
+- Check your internet connection
+- Ensure you have Claude API credits available
 
-- Qt 5: for the GUI frontend. Qt Multimedia or SDL are required for audio.
-- SDL: for a more basic frontend and gamepad support in the Qt frontend. SDL 2 is recommended, but 1.2 is supported.
-- zlib and libpng: for screenshot support and savestate-in-PNG support.
-- libedit: for command-line debugger support.
-- ffmpeg or libav: for video, GIF, WebP, and APNG recording.
-- libzip or zlib: for loading ROMs stored in zip files.
-- SQLite3: for game databases.
-- libelf: for ELF loading.
-- Lua: for scripting.
-- json-c: for the scripting `storage` API.
+**"Failed to get pixel data":**
+- Make sure a ROM is loaded and running
+- Try restarting the emulator
+- Check that the game is not paused
 
-SQLite3, libpng, and zlib are included with the emulator, so they do not need to be externally compiled first.
+**Claude gives nonsensical responses:**
+- Screenshots might not be capturing correctly
+- Try with a different ROM
+- Check the Claude response panel for error messages
 
-Footnotes
----------
+### Performance Tips
 
-<a name="missing">[1]</a> Currently missing features are
+- Close other intensive applications while running
+- Use a fast internet connection for responsive AI
+- Consider adjusting the loop interval for your system
 
-- OBJ window for modes 3, 4 and 5 ([Bug #5](http://mgba.io/b/5))
+## 🤝 Contributing
 
-<a name="flashdetect">[2]</a> Flash memory size detection does not work in some cases. These can be configured at runtime, but filing a bug is recommended if such a case is encountered.
+We welcome contributions! Areas for improvement:
 
-<a name="osxver">[3]</a> 10.9 is only needed for the Qt port. It may be possible to build or running the Qt port on 10.7 or older, but this is not officially supported. The SDL port is known to work on 10.5, and may work on older.
+- **Game-Specific Prompts**: Optimize Claude prompts for different games
+- **Advanced AI Features**: Memory, learning, goal-setting
+- **UI Enhancements**: Better visualization, settings panels
+- **Performance**: Faster screenshot capture, async processing
+- **Documentation**: Guides, examples, tutorials
 
-[downloads]: http://mgba.io/downloads.html
-[source]: https://github.com/mgba-emu/mgba/
+## 📄 License
 
-Copyright
----------
+This project is licensed under the Mozilla Public License 2.0 - see the [LICENSE](LICENSE) file for details.
 
-mGBA is Copyright © 2013 – 2023 Jeffrey Pfau. It is distributed under the [Mozilla Public License version 2.0](https://www.mozilla.org/MPL/2.0/). A copy of the license is available in the distributed LICENSE file.
+Based on [mGBA](https://mgba.io/) by endrift and contributors.
 
-mGBA contains the following third-party libraries:
+## 🙏 Acknowledgments
 
-- [inih](https://github.com/benhoyt/inih), which is copyright © 2009 – 2020 Ben Hoyt and used under a BSD 3-clause license.
-- [LZMA SDK](http://www.7-zip.org/sdk.html), which is public domain.
-- [MurmurHash3](https://github.com/aappleby/smhasher) implementation by Austin Appleby, which is public domain.
-- [getopt for MSVC](https://github.com/skandhurkat/Getopt-for-Visual-Studio/), which is public domain.
-- [SQLite3](https://www.sqlite.org), which is public domain.
+- **mGBA Team** - For the excellent emulator foundation
+- **Anthropic** - For Claude AI and the vision API
+- **Qt Project** - For the cross-platform GUI framework
+- **Pokemon Company** - For creating amazing games to play
 
-If you are a game publisher and wish to license mGBA for commercial usage, please email [licensing@mgba.io](mailto:licensing@mgba.io) for more information.
+## 🔗 Links
+
+- [mGBA Official Site](https://mgba.io/)
+- [Anthropic Claude](https://www.anthropic.com/claude)
+- [Qt Framework](https://www.qt.io/)
+- [Issue Tracker](https://github.com/your-username/claudemon/issues)
+
+---
+
+**Disclaimer**: This project is for educational and research purposes. Respect copyright laws and only use ROM files you legally own.

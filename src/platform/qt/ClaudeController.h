@@ -56,6 +56,7 @@ private slots:
     void processInputs(const QList<ClaudeInput>& inputs);
 
 private:
+    QByteArray captureScreenshotData();
     QString parseInputsFromResponse(const QString& response, QList<ClaudeInput>& inputs);
     void sendInputToGame(const QString& button, int count);
     int getGBAKeyCode(const QString& button);
