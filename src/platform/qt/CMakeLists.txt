@@ -107,6 +107,8 @@ set(SOURCE_FILES
 	CheatsModel.cpp
 	CheatsView.cpp
 	CheckBoxDelegate.cpp
+	ClaudeController.cpp
+	ClaudeView.cpp
 	ConfigController.cpp
 	ColorPicker.cpp
 	CoreManager.cpp

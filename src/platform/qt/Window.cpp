@@ -68,6 +68,7 @@
 #include "TileView.h"
 #include "VideoProxy.h"
 #include "VideoView.h"
+#include "ClaudeView.h"
 
 #ifdef USE_DISCORD_RPC
 #include "DiscordCoordinator.h"
@@ -100,6 +101,7 @@ Window::Window(CoreManager* manager, ConfigController* config, int playerId, QWi
 	, m_inputController(this)
 	, m_shortcutController(new ShortcutController(this))
 	, m_playerId(playerId)
+	, m_claudeController(new ClaudeController(this))
 {
 	setFocusPolicy(Qt::StrongFocus);
 	setAcceptDrops(true);
@@ -665,6 +667,15 @@ void Window::scriptingOpen() {
 	openView(view);
 }
 #endif
+
+void Window::claudeOpen() {
+	if (!m_claudeView) {
+		m_claudeView = new ClaudeView();
+		m_claudeView->setClaudeController(m_claudeController);
+		connect(this, &Window::shutdown, m_claudeView.data(), &QWidget::close);
+	}
+	openView(m_claudeView);
+}
 
 void Window::keyPressEvent(QKeyEvent* event) {
 	if (event->isAutoRepeat()) {
@@ -1763,6 +1774,8 @@ void Window::setupMenu(QMenuBar* menubar) {
 	m_actions.addAction(tr("Scripting..."), "scripting", this, &Window::scriptingOpen, "tools");
 #endif
 
+	m_actions.addAction(tr("Claude AI..."), "claude", this, &Window::claudeOpen, "tools");
+
 	m_actions.addAction(tr("Create forwarder..."), "createForwarder", openTView<ForwarderView>(), "tools");
 
 	m_actions.addSeparator("tools");
@@ -2269,6 +2282,12 @@ void Window::setController(CoreController* controller, const QString& fname) {
 
 	if (m_overrideView) {
 		m_overrideView->setController(m_controller);
+	}
+
+	// Set up Claude controller
+	if (m_claudeController) {
+		m_claudeController->setCoreController(m_controller.get());
+		m_claudeController->setInputController(&m_inputController);
 	}
 
 	if (!m_pendingPatch.isEmpty()) {

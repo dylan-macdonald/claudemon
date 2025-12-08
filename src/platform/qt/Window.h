@@ -27,9 +27,13 @@
 #include "scripting/ScriptingController.h"
 #endif
 
+#include "ClaudeController.h"
+
 namespace QGBA {
 
 class AudioProcessor;
+class ClaudeController;
+class ClaudeView;
 class ConfigController;
 class CoreController;
 class CoreManager;
@@ -123,6 +127,8 @@ public slots:
 #ifdef ENABLE_SCRIPTING
 	void scriptingOpen();
 #endif
+
+	void claudeOpen();
 
 protected:
 	virtual void keyPressEvent(QKeyEvent* event) override;
@@ -265,6 +271,9 @@ private:
 #ifdef ENABLE_SCRIPTING
 	std::unique_ptr<ScriptingController> m_scripting;
 #endif
+
+	ClaudeController* m_claudeController;
+	QPointer<ClaudeView> m_claudeView;
 };
 
 class WindowBackground : public QWidget {
