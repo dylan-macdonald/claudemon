@@ -14,9 +14,32 @@
 #include FT_MODULE_H
 #include FT_STROKER_H
 
+#ifdef _MSC_VER
+#include <windows.h>
+#define _Atomic volatile
+#else
+#include <stdatomic.h>
+#endif
+
 #define DPI 100
 
+#ifdef _MSC_VER
+static CRITICAL_SECTION gFtLock;
+static LONG gFtLockInit = 0;
+
+static void ensureFtLock() {
+	if (InterlockedCompareExchange(&gFtLockInit, 1, 0) == 0) {
+		InitializeCriticalSection(&gFtLock);
+	}
+}
+
+#define FT_LOCK() do { ensureFtLock(); EnterCriticalSection(&gFtLock); } while (0)
+#define FT_UNLOCK() LeaveCriticalSection(&gFtLock)
+#else
 static _Atomic size_t libraryOpen = 0;
+#define FT_LOCK() ((void)0)
+#define FT_UNLOCK() ((void)0)
+#endif
 static FT_Library library;
 
 struct mFont {
@@ -40,21 +63,35 @@ static void _makeTemporaryImage(struct mImage* out, FT_Bitmap* in) {
 }
 
 struct mFont* mFontOpen(const char* path) {
+	FT_LOCK();
+#ifndef _MSC_VER
 	size_t opened = ++libraryOpen;
-	if (opened == 1) {
+	bool needInit = (opened == 1);
+#else
+	bool needInit = false;
+	static LONG libraryInit = 0;
+	if (InterlockedIncrement(&libraryInit) == 1) {
+		needInit = true;
+	}
+#endif
+
+	if (needInit) {
 		if (FT_Init_FreeType(&library)) {
+			FT_UNLOCK();
 			return NULL;
 		}
 	}
 
 	FT_Face face;
 	if (FT_New_Face(library, path, 0, &face)) {
+		FT_UNLOCK();
 		return NULL;
 	}
 
 	FT_Stroker stroker;
 	if (FT_Stroker_New(library, &stroker)) {
 		FT_Done_Face(face);
+		FT_UNLOCK();
 		return NULL;
 	}
 
@@ -62,18 +99,28 @@ struct mFont* mFontOpen(const char* path) {
 	font->face = face;
 	font->stroker = stroker;
 	mFontSetSize(font, 8 << mFONT_FRACT_BITS);
+	FT_UNLOCK();
 	return font;
 }
 
 void mFontDestroy(struct mFont* font) {
+	FT_LOCK();
 	FT_Done_Face(font->face);
 	FT_Stroker_Done(font->stroker);
 	free(font);
 
+#ifndef _MSC_VER
 	size_t opened = --libraryOpen;
 	if (opened == 0) {
 		FT_Done_FreeType(library);
 	}
+#else
+	static LONG libraryInit = 1; // already incremented in open
+	if (InterlockedDecrement(&libraryInit) == 0) {
+		FT_Done_FreeType(library);
+	}
+#endif
+	FT_UNLOCK();
 }
 
 unsigned mFontSize(const struct mFont* font) {
