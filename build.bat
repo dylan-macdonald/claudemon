@@ -38,13 +38,13 @@ if %errorlevel% equ 0 (
     set "EXTRA_CMAKE=%EXTRA_CMAKE% -DCMAKE_CXX_COMPILER_LAUNCHER=ccache -DCMAKE_C_COMPILER_LAUNCHER=ccache"
 )
 
-rem Set up vcpkg if available (skip auto-detection for now to avoid path issues)
-rem if defined VCPKG_ROOT (
-rem   if exist "%VCPKG_ROOT%\scripts\buildsystems\vcpkg.cmake" (
-rem     set "EXTRA_CMAKE=%EXTRA_CMAKE% -DCMAKE_TOOLCHAIN_FILE=%VCPKG_ROOT%\scripts\buildsystems\vcpkg.cmake"
-rem     echo Using vcpkg toolchain: %VCPKG_ROOT%\scripts\buildsystems\vcpkg.cmake
-rem   )
-rem )
+rem Set up vcpkg if available
+if defined VCPKG_ROOT (
+  if exist "%VCPKG_ROOT%\scripts\buildsystems\vcpkg.cmake" (
+    set "EXTRA_CMAKE=%EXTRA_CMAKE% -DCMAKE_TOOLCHAIN_FILE=%VCPKG_ROOT%\scripts\buildsystems\vcpkg.cmake"
+    echo Using vcpkg toolchain: %VCPKG_ROOT%\scripts\buildsystems\vcpkg.cmake
+  )
+)
 
 rem Determine number of cores for parallel compilation
 if defined NUMBER_OF_PROCESSORS (
