@@ -1,4 +1,5 @@
 @echo off
+setlocal enabledelayedexpansion
 set "ORIGINAL_DIR=%CD%"
 echo.
 echo === Claudemon Build ===
@@ -40,9 +41,10 @@ if %errorlevel% equ 0 (
 
 rem Set up vcpkg if available
 if defined VCPKG_ROOT (
-  if exist "%VCPKG_ROOT%\scripts\buildsystems\vcpkg.cmake" (
-    set "EXTRA_CMAKE=%EXTRA_CMAKE% -DCMAKE_TOOLCHAIN_FILE=%VCPKG_ROOT%\scripts\buildsystems\vcpkg.cmake"
-    echo Using vcpkg toolchain: %VCPKG_ROOT%\scripts\buildsystems\vcpkg.cmake
+  set "VCPKG_CMAKE_FILE=!VCPKG_ROOT!\scripts\buildsystems\vcpkg.cmake"
+  if exist "!VCPKG_CMAKE_FILE!" (
+    set "EXTRA_CMAKE=!EXTRA_CMAKE! -DCMAKE_TOOLCHAIN_FILE=!VCPKG_CMAKE_FILE!"
+    echo Using vcpkg toolchain: !VCPKG_CMAKE_FILE!
   )
 )
 
@@ -54,7 +56,7 @@ if defined NUMBER_OF_PROCESSORS (
 )
 echo Using %CORES% cores for parallel compilation
 
-cmake .. -G "Ninja" -DCMAKE_BUILD_TYPE=RelWithDebInfo -DCMAKE_POLICY_VERSION_MINIMUM=3.5 %EXTRA_CMAKE%
+cmake .. -G "Ninja" -DCMAKE_BUILD_TYPE=RelWithDebInfo -DCMAKE_POLICY_VERSION_MINIMUM=3.5 !EXTRA_CMAKE!
 if %errorlevel% neq 0 goto :cmake_fail
 
 echo.
