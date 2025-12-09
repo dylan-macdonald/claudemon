@@ -15,6 +15,8 @@
 #include <QGroupBox>
 #include <QListWidget>
 #include <QTimer>
+#include <QComboBox>
+#include <QCheckBox>
 
 #include "ClaudeController.h"
 
@@ -35,6 +37,7 @@ private slots:
     void onClaudeResponseReceived(const QString& response);
     void onClaudeInputsGenerated(const QList<ClaudeInput>& inputs);
     void onClaudeErrorOccurred(const QString& error);
+    void onClaudeCriticalError(const QString& error, const QString& errorCode);
     void onLoopTick();
     void updateStatus();
 
@@ -52,6 +55,8 @@ private:
     QLineEdit* m_apiKeyEdit;
     QPushButton* m_startStopButton;
     QLabel* m_statusLabel;
+    QComboBox* m_modelCombo;
+    QCheckBox* m_thinkingCheck;
     
     // Claude Response section
     QGroupBox* m_responseGroup;
@@ -65,6 +70,7 @@ private:
     QGroupBox* m_statusGroup;
     QLabel* m_loopCountLabel;
     QLabel* m_lastActionLabel;
+    QLabel* m_errorCountLabel;
     
     QTimer* m_statusTimer;
     int m_loopCount;

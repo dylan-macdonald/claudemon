@@ -69,6 +69,7 @@
 #include "VideoProxy.h"
 #include "VideoView.h"
 #include "ClaudeView.h"
+#include "ClaudeController.h"
 
 #ifdef USE_DISCORD_RPC
 #include "DiscordCoordinator.h"
@@ -2288,6 +2289,8 @@ void Window::setController(CoreController* controller, const QString& fname) {
 	if (m_claudeController) {
 		m_claudeController->setCoreController(m_controller.get());
 		m_claudeController->setInputController(&m_inputController);
+		connect(m_controller.get(), &CoreController::started, m_claudeController, &ClaudeController::notifyGameStarted);
+		connect(m_controller.get(), &CoreController::stopping, m_claudeController, &ClaudeController::notifyGameStopped);
 	}
 
 	if (!m_pendingPatch.isEmpty()) {

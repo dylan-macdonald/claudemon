@@ -1,5 +1,5 @@
 #!/bin/bash
-set -e
+set -euo pipefail
 
 echo "🎮 Claudemon Setup - mGBA + Claude AI Integration"
 echo "=================================================="
@@ -39,6 +39,12 @@ echo ""
 echo "Step 1: Checking system requirements..."
 echo "======================================="
 
+# Make sure we're in the project root
+if [ ! -f "CMakeLists.txt" ]; then
+    echo -e "${RED}✗${NC} Please run this script from the project root (CMakeLists.txt not found)"
+    exit 1
+fi
+
 # Check OS
 if [[ "$OSTYPE" == "linux-gnu"* ]]; then
     OS="linux"
@@ -47,8 +53,14 @@ elif [[ "$OSTYPE" == "darwin"* ]]; then
     OS="macos"
     print_status 0 "Running on macOS"
 elif [[ "$OSTYPE" == "msys"* ]] || [[ "$OSTYPE" == "cygwin"* ]]; then
-    OS="windows"
-    print_status 0 "Running on Windows (WSL/MSYS2)"
+    if [ -n "${WSL_DISTRO_NAME:-}" ]; then
+        OS="linux"
+        print_status 0 "Running on Windows Subsystem for Linux"
+    else
+        OS="windows"
+        print_warning "Native Windows shell detected. Please use setup.bat instead or run under WSL."
+        exit 1
+    fi
 else
     print_status 1 "Unknown OS: $OSTYPE"
     exit 1
@@ -91,19 +103,21 @@ echo ""
 echo "Step 2: Checking Qt and libraries..."
 echo "====================================="
 
-# Check Qt5/Qt6 development packages
+# Check Qt5/Qt6 development packages (need Multimedia for screenshots)
 QT_FOUND=false
-if pkg-config --exists Qt5Core Qt5Widgets Qt5Network; then
+if pkg-config --exists Qt5Core Qt5Widgets Qt5Network Qt5Multimedia; then
     QT_VERSION=$(pkg-config --modversion Qt5Core)
     print_status 0 "Qt5 development libraries found: $QT_VERSION"
     QT_FOUND=true
-elif pkg-config --exists Qt6Core Qt6Widgets Qt6Network; then
+elif pkg-config --exists Qt6Core Qt6Widgets Qt6Network Qt6Multimedia; then
     QT_VERSION=$(pkg-config --modversion Qt6Core)
     print_status 0 "Qt6 development libraries found: $QT_VERSION"
     QT_FOUND=true
 else
     print_status 1 "Qt development libraries not found"
-    missing_deps+=("qtbase5-dev" "qtmultimedia5-dev")
+    if [[ "$OS" == "linux" ]]; then
+        missing_deps+=("qtbase5-dev" "qtmultimedia5-dev" "qt6-base-dev" "qt6-multimedia-dev")
+    fi
 fi
 
 # Check other required libraries
@@ -121,6 +135,15 @@ if pkg-config --exists zlib; then
 else
     print_status 1 "zlib not found"
     missing_deps+=("zlib1g-dev")
+fi
+
+# libepoxy is required for Qt on Linux
+if pkg-config --exists epoxy; then
+    EPOXY_VERSION=$(pkg-config --modversion epoxy)
+    print_status 0 "libepoxy found: $EPOXY_VERSION"
+else
+    print_status 1 "libepoxy not found"
+    missing_deps+=("libepoxy-dev")
 fi
 
 if pkg-config --exists sdl2; then
@@ -156,7 +179,9 @@ else
         fi
     elif [[ "$OS" == "macos" ]]; then
         echo "macOS (using Homebrew):"
-        echo "brew install cmake qt5 libpng zlib sdl2 pkg-config"
+        echo "brew install cmake qt@6 libpng zlib sdl2 pkg-config libepoxy"
+        echo "If you need Qt5 instead:"
+        echo "brew install qt@5 && brew link qt@5 --force"
     fi
     
     echo ""
@@ -167,6 +192,11 @@ fi
 echo ""
 echo "Step 3: Building Claudemon..."
 echo "============================="
+
+if command_exists git; then
+    print_info "Syncing submodules..."
+    git submodule update --init --recursive
+fi
 
 # Create build directory
 BUILD_DIR="build"
@@ -181,16 +211,16 @@ cd "$BUILD_DIR"
 
 # Configure CMake
 print_info "Configuring CMake..."
-CMAKE_ARGS="-DCMAKE_BUILD_TYPE=RelWithDebInfo"
+CMAKE_ARGS=("-DCMAKE_BUILD_TYPE=RelWithDebInfo")
 
 if [[ "$OS" == "macos" ]] && command_exists brew; then
-    QT_PATH=$(brew --prefix qt5 2>/dev/null || brew --prefix qt6 2>/dev/null || echo "")
-    if [ ! -z "$QT_PATH" ]; then
-        CMAKE_ARGS="$CMAKE_ARGS -DCMAKE_PREFIX_PATH=$QT_PATH"
+    QT_PATH=$(brew --prefix qt 2>/dev/null || brew --prefix qt5 2>/dev/null || brew --prefix qt6 2>/dev/null || echo "")
+    if [ -n "$QT_PATH" ]; then
+        CMAKE_ARGS+=("-DCMAKE_PREFIX_PATH=$QT_PATH")
     fi
 fi
 
-if cmake .. $CMAKE_ARGS; then
+if cmake .. "${CMAKE_ARGS[@]}"; then
     print_status 0 "CMake configuration successful"
 else
     print_status 1 "CMake configuration failed"

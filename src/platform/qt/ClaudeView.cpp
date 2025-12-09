@@ -39,6 +39,23 @@ void ClaudeView::setupUI() {
     m_apiKeyEdit->setEchoMode(QLineEdit::Password);
     m_apiKeyEdit->setPlaceholderText("Enter your Claude API key...");
     keyLayout->addWidget(m_apiKeyEdit);
+
+    QHBoxLayout* modelLayout = new QHBoxLayout;
+    modelLayout->addWidget(new QLabel("Model:", this));
+    m_modelCombo = new QComboBox(this);
+    m_modelCombo->addItem("Opus 4.5", QVariant::fromValue(static_cast<int>(ClaudeController::ModelOpus)));
+    m_modelCombo->addItem("Sonnet 4.5", QVariant::fromValue(static_cast<int>(ClaudeController::ModelSonnet)));
+    m_modelCombo->addItem("Haiku 4.5", QVariant::fromValue(static_cast<int>(ClaudeController::ModelHaiku)));
+    // Default to Sonnet
+    int sonnetIdx = m_modelCombo->findData(QVariant::fromValue(static_cast<int>(ClaudeController::ModelSonnet)));
+    if (sonnetIdx >= 0) {
+        m_modelCombo->setCurrentIndex(sonnetIdx);
+    }
+    modelLayout->addWidget(m_modelCombo);
+
+    m_thinkingCheck = new QCheckBox("Thinking", this);
+    modelLayout->addWidget(m_thinkingCheck);
+    modelLayout->addStretch();
     
     QHBoxLayout* controlLayout = new QHBoxLayout;
     m_startStopButton = new QPushButton("Start Claude", this);
@@ -49,6 +66,7 @@ void ClaudeView::setupUI() {
     controlLayout->addStretch();
     
     apiLayout->addLayout(keyLayout);
+    apiLayout->addLayout(modelLayout);
     apiLayout->addLayout(controlLayout);
     m_mainLayout->addWidget(m_apiGroup);
     
@@ -87,6 +105,11 @@ void ClaudeView::setupUI() {
     m_lastActionLabel = new QLabel("None", this);
     statusLayout->addWidget(m_lastActionLabel, 1, 1);
     
+    statusLayout->addWidget(new QLabel("Errors:", this), 2, 0);
+    m_errorCountLabel = new QLabel("0", this);
+    m_errorCountLabel->setStyleSheet("color: gray;");
+    statusLayout->addWidget(m_errorCountLabel, 2, 1);
+    
     rightLayout->addWidget(m_statusGroup);
     
     splitter->addWidget(rightContainer);
@@ -118,8 +141,22 @@ void ClaudeView::setClaudeController(ClaudeController* controller) {
                 this, &ClaudeView::onClaudeInputsGenerated);
         connect(m_claudeController, &ClaudeController::errorOccurred, 
                 this, &ClaudeView::onClaudeErrorOccurred);
+        connect(m_claudeController, &ClaudeController::criticalError, 
+                this, &ClaudeView::onClaudeCriticalError);
         connect(m_claudeController, &ClaudeController::loopTick, 
                 this, &ClaudeView::onLoopTick);
+        connect(m_claudeController, &ClaudeController::gameReadyChanged,
+                this, &ClaudeView::updateButtonStates);
+
+        // Sync UI with persisted session (block signals to avoid triggering saves)
+        m_apiKeyEdit->blockSignals(true);
+        m_apiKeyEdit->setText(m_claudeController->apiKey());
+        m_apiKeyEdit->blockSignals(false);
+        
+        ClaudeController::Model model = m_claudeController->model();
+        int idx = m_modelCombo->findData(QVariant::fromValue(static_cast<int>(model)));
+        if (idx >= 0) m_modelCombo->setCurrentIndex(idx);
+        m_thinkingCheck->setChecked(m_claudeController->thinkingEnabled());
     }
     
     updateButtonStates();
@@ -140,17 +177,36 @@ void ClaudeView::onStartStopClicked() {
             m_statusLabel->setStyleSheet("color: red; font-weight: bold;");
             return;
         }
+
+        // Configure model and thinking
+        QVariant data = m_modelCombo->currentData();
+        ClaudeController::Model model = ClaudeController::ModelSonnet;
+        if (data.isValid()) {
+            model = static_cast<ClaudeController::Model>(data.toInt());
+        }
+        m_claudeController->setModel(model);
+    m_claudeController->setThinkingEnabled(m_thinkingCheck->isChecked());
         
         m_claudeController->setApiKey(apiKey);
         m_claudeController->startGameLoop();
-        m_startStopButton->setText("Stop Claude");
-        m_statusLabel->setText("Running");
-        m_statusLabel->setStyleSheet("color: green; font-weight: bold;");
-        m_loopCount = 0;
+        
+        // Check if it actually started (might fail if no ROM loaded)
+        if (m_claudeController->isRunning()) {
+            m_startStopButton->setText("Stop Claude");
+            m_statusLabel->setText("Running");
+            m_statusLabel->setStyleSheet("color: green; font-weight: bold;");
+            m_loopCount = 0;
+            m_errorCountLabel->setText("0");
+            m_errorCountLabel->setStyleSheet("color: gray;");
+        }
     }
 }
 
 void ClaudeView::onApiKeyChanged() {
+    // Save API key to controller immediately so it persists
+    if (m_claudeController) {
+        m_claudeController->setApiKey(m_apiKeyEdit->text().trimmed());
+    }
     updateButtonStates();
 }
 
@@ -192,11 +248,43 @@ void ClaudeView::onClaudeErrorOccurred(const QString& error) {
     QString timestamp = QDateTime::currentDateTime().toString("hh:mm:ss");
     QString errorMsg = QString("[%1] ERROR: %2").arg(timestamp, error);
     
-    m_responseText->append(errorMsg);
+    m_responseText->append(QString("<span style='color: orange;'>%1</span>").arg(errorMsg));
     m_responseText->append("");
     
-    m_statusLabel->setText("Error occurred");
+    // Update error count display
+    if (m_claudeController) {
+        int errorCount = m_claudeController->getConsecutiveErrors();
+        m_errorCountLabel->setText(QString::number(errorCount));
+        if (errorCount > 0) {
+            m_errorCountLabel->setStyleSheet("color: orange; font-weight: bold;");
+        }
+    }
+    
+    m_statusLabel->setText("Error (retrying...)");
+    m_statusLabel->setStyleSheet("color: orange; font-weight: bold;");
+    
+    // Auto-scroll to bottom
+    QScrollBar* scrollBar = m_responseText->verticalScrollBar();
+    scrollBar->setValue(scrollBar->maximum());
+}
+
+void ClaudeView::onClaudeCriticalError(const QString& error, const QString& errorCode) {
+    QString timestamp = QDateTime::currentDateTime().toString("hh:mm:ss");
+    QString errorMsg = QString("[%1] CRITICAL ERROR [%2]: %3").arg(timestamp, errorCode, error);
+    
+    m_responseText->append(QString("<span style='color: red; font-weight: bold;'>%1</span>").arg(errorMsg));
+    m_responseText->append("");
+    m_responseText->append("<span style='color: gray;'>Game state has been saved to slot 9.</span>");
+    m_responseText->append("");
+    
+    // Update UI to reflect stopped state
+    m_startStopButton->setText("Start Claude");
+    m_statusLabel->setText("Stopped (Error)");
     m_statusLabel->setStyleSheet("color: red; font-weight: bold;");
+    
+    // Update error count
+    m_errorCountLabel->setText("CRITICAL");
+    m_errorCountLabel->setStyleSheet("color: red; font-weight: bold;");
     
     // Auto-scroll to bottom
     QScrollBar* scrollBar = m_responseText->verticalScrollBar();
@@ -206,6 +294,14 @@ void ClaudeView::onClaudeErrorOccurred(const QString& error) {
 void ClaudeView::onLoopTick() {
     m_loopCount++;
     m_loopCountLabel->setText(QString::number(m_loopCount));
+    
+    // Reset error styling on successful tick
+    if (m_claudeController && m_claudeController->getConsecutiveErrors() == 0) {
+        m_errorCountLabel->setText("0");
+        m_errorCountLabel->setStyleSheet("color: gray;");
+        m_statusLabel->setText("Running");
+        m_statusLabel->setStyleSheet("color: green; font-weight: bold;");
+    }
 }
 
 void ClaudeView::updateStatus() {
@@ -216,12 +312,25 @@ void ClaudeView::updateStatus() {
 void ClaudeView::updateButtonStates() {
     bool hasApiKey = !m_apiKeyEdit->text().trimmed().isEmpty();
     bool hasController = m_claudeController != nullptr;
+    bool canStart = hasController && m_claudeController->canStart();
     
-    m_startStopButton->setEnabled(hasApiKey && hasController);
+    m_startStopButton->setEnabled(hasApiKey && hasController && canStart);
     
     if (hasController && m_claudeController->isRunning()) {
         m_startStopButton->setText("Stop Claude");
+        m_statusLabel->setText("Running");
+        m_statusLabel->setStyleSheet("color: green; font-weight: bold;");
     } else {
         m_startStopButton->setText("Start Claude");
+        if (!canStart) {
+            m_statusLabel->setText("Load a ROM first");
+            m_statusLabel->setStyleSheet("color: red; font-weight: bold;");
+        } else if (!hasApiKey) {
+            m_statusLabel->setText("Enter API key");
+            m_statusLabel->setStyleSheet("color: orange; font-weight: bold;");
+        } else {
+            m_statusLabel->setText("Ready");
+            m_statusLabel->setStyleSheet("color: green; font-weight: bold;");
+        }
     }
 }
