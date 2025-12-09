@@ -1,4 +1,5 @@
 @echo off
+set "ORIGINAL_DIR=%CD%"
 echo.
 echo === Claudemon Build ===
 
@@ -64,24 +65,26 @@ if %errorlevel% neq 0 goto :build_fail
 echo.
 echo Build complete!
 echo Look for mgba-qt.exe in the build directory.
-cd ..
+cd /d "%ORIGINAL_DIR%"
 goto :eof
 
 :no_cl
 echo [ERROR] cl.exe not found. Run from "x64 Native Tools Command Prompt for VS".
+cd /d "%ORIGINAL_DIR%"
 goto :eof
 
 :no_ninja
 echo [ERROR] ninja not found. Install ninja and add to PATH, or run from environment with ninja available.
 echo Download from: https://github.com/ninja-build/ninja/releases
+cd /d "%ORIGINAL_DIR%"
 goto :eof
 
 :cmake_fail
 echo [ERROR] CMake configuration failed.
-cd ..
+cd /d "%ORIGINAL_DIR%"
 goto :eof
 
 :build_fail
 echo [ERROR] Build failed.
-cd ..
+cd /d "%ORIGINAL_DIR%"
 goto :eof
