@@ -121,3 +121,12 @@ Cargo.lock
 # Backup files
 *.bak
 *.backup
+
+# Build scripts and setup files (platform-specific)
+build-windows.bat
+build-windows.sh
+setup-qt.bat
+check-build.bat
+debug-build.bat
+sync-*.sh
+sync-*.bat
