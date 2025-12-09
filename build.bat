@@ -39,13 +39,21 @@ if %errorlevel% equ 0 (
     set "EXTRA_CMAKE=%EXTRA_CMAKE% -DCMAKE_CXX_COMPILER_LAUNCHER=ccache -DCMAKE_C_COMPILER_LAUNCHER=ccache"
 )
 
-rem Set up vcpkg if available
-if defined VCPKG_ROOT (
-  set "VCPKG_CMAKE_FILE=!VCPKG_ROOT!\scripts\buildsystems\vcpkg.cmake"
-  if exist "!VCPKG_CMAKE_FILE!" (
-    set "EXTRA_CMAKE=!EXTRA_CMAKE! -DCMAKE_TOOLCHAIN_FILE=!VCPKG_CMAKE_FILE!"
-    echo Using vcpkg toolchain: !VCPKG_CMAKE_FILE!
+rem Set up vcpkg - prefer C:\vcpkg over Visual Studio's built-in vcpkg
+set "VCPKG_CMAKE_FILE="
+if exist "C:\vcpkg\scripts\buildsystems\vcpkg.cmake" (
+  set "VCPKG_CMAKE_FILE=C:\vcpkg\scripts\buildsystems\vcpkg.cmake"
+  echo Using custom vcpkg at: C:\vcpkg
+) else if defined VCPKG_ROOT (
+  if exist "!VCPKG_ROOT!\scripts\buildsystems\vcpkg.cmake" (
+    set "VCPKG_CMAKE_FILE=!VCPKG_ROOT!\scripts\buildsystems\vcpkg.cmake"
+    echo Using vcpkg from VCPKG_ROOT: !VCPKG_ROOT!
   )
+)
+
+if defined VCPKG_CMAKE_FILE (
+  set "EXTRA_CMAKE=!EXTRA_CMAKE! -DCMAKE_TOOLCHAIN_FILE=!VCPKG_CMAKE_FILE!"
+  echo Using vcpkg toolchain: !VCPKG_CMAKE_FILE!
 )
 
 rem Determine number of cores for parallel compilation
