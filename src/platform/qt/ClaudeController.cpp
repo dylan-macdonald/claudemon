@@ -303,6 +303,12 @@ void ClaudeController::captureAndSendScreenshot() {
         promptText += "You can add notes with [NOTE: message], clear specific notes with [CLEAR NOTE: #], or clear all with [CLEAR ALL NOTES].\n\n";
     }
     
+    // Check for stuck detection
+    QString stuckWarning = checkForStuckPattern();
+    if (!stuckWarning.isEmpty()) {
+        promptText += stuckWarning + "\n";
+    }
+    
     textContent["text"] = promptText;
     content.append(textContent);
     
@@ -694,6 +700,45 @@ void ClaudeController::clearAllNotes() {
         emit notesChanged();
         saveSessionToDisk();
     }
+}
+
+QString ClaudeController::checkForStuckPattern() const {
+    if (m_recentInputs.size() < 5) {
+        return QString(); // Not enough inputs to detect pattern
+    }
+    
+    // Check for consecutive directional inputs (last 5+ inputs)
+    QString lastDirection;
+    int consecutiveCount = 0;
+    
+    // Look at the last 10 inputs to find consecutive patterns
+    int startCheck = qMax(0, m_recentInputs.size() - 10);
+    for (int i = m_recentInputs.size() - 1; i >= startCheck; --i) {
+        QString input = m_recentInputs[i].input;
+        
+        // Extract button name (ignore counts like "x2", "x3")
+        QString button = input.split(" ").first().toLower();
+        
+        if (isDirectionalButton(button)) {
+            if (button == lastDirection) {
+                consecutiveCount++;
+            } else {
+                // Different direction, reset count
+                lastDirection = button;
+                consecutiveCount = 1;
+            }
+        } else {
+            // Non-directional input breaks the pattern
+            break;
+        }
+    }
+    
+    if (consecutiveCount >= 5) {
+        return QString("WARNING: You've pressed '%1' %2 times consecutively. You may be stuck. Try a different approach.")
+               .arg(lastDirection.toUpper()).arg(consecutiveCount);
+    }
+    
+    return QString();
 }
 
 void ClaudeController::processInputs(const QList<ClaudeInput>& inputs) {
