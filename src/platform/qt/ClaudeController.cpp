@@ -877,7 +877,7 @@ QString ClaudeController::checkForStuckPattern() const {
     return QString();
 }
 
-QString ClaudeController::readGameState() const {
+QString ClaudeController::readGameState() {
     QFile file("scripts/game_state.json");
     if (!file.open(QIODevice::ReadOnly)) {
         return QString(); // No game state file
