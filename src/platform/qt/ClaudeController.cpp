@@ -50,6 +50,7 @@ ClaudeController::ClaudeController(QObject* parent)
     , m_backoffMultiplier(1)
     , m_model(ModelSonnet)
     , m_thinkingEnabled(false)
+    , m_webSearchEnabled(false)
     , m_nextNoteId(1)
     , m_currentKey(-1)
     , m_currentKeyIsDirectional(false)
@@ -146,6 +147,11 @@ void ClaudeController::setModel(Model model) {
 void ClaudeController::setThinkingEnabled(bool enabled) {
     if (m_modelLocked) return;
     m_thinkingEnabled = enabled;
+}
+
+void ClaudeController::setWebSearchEnabled(bool enabled) {
+    if (m_modelLocked) return;
+    m_webSearchEnabled = enabled;
 }
 
 void ClaudeController::startGameLoop() {
@@ -258,10 +264,27 @@ void ClaudeController::captureAndSendScreenshot() {
     
     QJsonObject requestBody;
     requestBody["model"] = modelAlias();
-    requestBody["max_tokens"] = 300;
+    
+    // Set appropriate max_tokens based on thinking
     if (m_thinkingEnabled) {
-        // Hint to allow thinking (metadata only; still enforce command-only output)
-        requestBody["metadata"] = QJsonObject{{"thinking", true}};
+        requestBody["max_tokens"] = 16000;  // Budget for thinking + response
+        QJsonObject thinking;
+        thinking["type"] = "enabled";
+        thinking["budget_tokens"] = 10000;
+        requestBody["thinking"] = thinking;
+    } else {
+        requestBody["max_tokens"] = 300;
+    }
+    
+    // Add web search tool if enabled
+    if (m_webSearchEnabled) {
+        QJsonArray tools;
+        QJsonObject webSearchTool;
+        webSearchTool["type"] = "web_search_20250305";
+        webSearchTool["name"] = "web_search";
+        webSearchTool["max_uses"] = 3;
+        tools.append(webSearchTool);
+        requestBody["tools"] = tools;
     }
 
     QJsonArray messages;
@@ -313,6 +336,17 @@ void ClaudeController::captureAndSendScreenshot() {
     QString gameState = readGameState();
     if (!gameState.isEmpty()) {
         promptText += gameState + "\n";
+    }
+    
+    // Add search results if available
+    if (!m_pendingSearchResults.isEmpty()) {
+        promptText += "Search results:\n" + m_pendingSearchResults + "\n";
+        m_pendingSearchResults.clear(); // Clear after use
+    }
+    
+    // Add search instruction if web search is enabled
+    if (m_webSearchEnabled) {
+        promptText += "You can search for information with [SEARCH: query here].\n";
     }
     
     textContent["text"] = promptText;
@@ -522,6 +556,7 @@ void ClaudeController::handleApiResponse() {
                 QList<ClaudeInput> inputs;
                 parseInputsFromResponse(responseText, inputs);
                 parseNotesFromResponse(responseText);
+                parseSearchRequestFromResponse(responseText);
                 m_lastInputs = inputs;
 
                 // Append assistant message to history (text only)
@@ -785,6 +820,92 @@ QString ClaudeController::readGameState() const {
     return QString();
 }
 
+void ClaudeController::parseSearchRequestFromResponse(const QString& response) {
+    // Look for [SEARCH: query] commands
+    QRegularExpression searchRegex("\\[SEARCH:\\s*(.+?)\\]", QRegularExpression::CaseInsensitiveOption);
+    QRegularExpressionMatchIterator searchIt = searchRegex.globalMatch(response);
+    
+    while (searchIt.hasNext()) {
+        QRegularExpressionMatch match = searchIt.next();
+        QString query = match.captured(1).trimmed();
+        if (!query.isEmpty() && m_webSearchEnabled) {
+            performWebSearch(query);
+            break; // Only handle first search request to avoid spam
+        }
+    }
+}
+
+void ClaudeController::performWebSearch(const QString& query) {
+    // Make a separate API call with web search enabled
+    QJsonObject searchRequestBody;
+    searchRequestBody["model"] = modelAlias();
+    searchRequestBody["max_tokens"] = 1024;
+    
+    QJsonArray tools;
+    QJsonObject webSearchTool;
+    webSearchTool["type"] = "web_search_20250305";
+    webSearchTool["name"] = "web_search";
+    webSearchTool["max_uses"] = 3;
+    tools.append(webSearchTool);
+    searchRequestBody["tools"] = tools;
+    
+    QJsonArray messages;
+    QJsonObject message;
+    message["role"] = "user";
+    QJsonArray content;
+    QJsonObject textContent;
+    textContent["type"] = "text";
+    textContent["text"] = QString("Search for: %1").arg(query);
+    content.append(textContent);
+    message["content"] = content;
+    messages.append(message);
+    
+    searchRequestBody["messages"] = messages;
+    
+    QJsonDocument doc(searchRequestBody);
+    QByteArray data = doc.toJson();
+    
+    qDebug() << "Making web search request for query:" << query;
+    
+    QNetworkRequest netRequest{QUrl(CLAUDE_API_URL)};
+    netRequest.setHeader(QNetworkRequest::ContentTypeHeader, "application/json");
+    netRequest.setRawHeader("x-api-key", m_apiKey.toUtf8());
+    netRequest.setRawHeader("anthropic-version", "2023-06-01");
+    netRequest.setRawHeader("User-Agent", "Claudemon/1.0 (mGBA fork)");
+    
+    QNetworkReply* reply = m_networkManager->post(netRequest, data);
+    connect(reply, &QNetworkReply::finished, [this, reply]() {
+        reply->deleteLater();
+        
+        QByteArray responseData = reply->readAll();
+        int httpStatus = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
+        
+        if (reply->error() == QNetworkReply::NoError && httpStatus == 200) {
+            QJsonParseError parseError;
+            QJsonDocument doc = QJsonDocument::fromJson(responseData, &parseError);
+            
+            if (parseError.error == QJsonParseError::NoError && doc.isObject()) {
+                QJsonObject response = doc.object();
+                if (response.contains("content") && response["content"].isArray()) {
+                    QJsonArray contentArray = response["content"].toArray();
+                    for (const QJsonValue& contentVal : contentArray) {
+                        QJsonObject contentObj = contentVal.toObject();
+                        if (contentObj["type"].toString() == "text") {
+                            QString searchResults = contentObj["text"].toString();
+                            m_pendingSearchResults = searchResults;
+                            qDebug() << "Web search completed successfully";
+                            return;
+                        }
+                    }
+                }
+            }
+        }
+        
+        qDebug() << "Web search failed:" << reply->errorString();
+        m_pendingSearchResults = "Search failed: " + reply->errorString();
+    });
+}
+
 void ClaudeController::processInputs(const QList<ClaudeInput>& inputs) {
     if (!m_inputController || !m_running) return;
     
@@ -937,6 +1058,7 @@ void ClaudeController::saveSessionToDisk() {
     root["model"] = modelAlias();
     root["apiKey"] = m_apiKey;
     root["thinking"] = m_thinkingEnabled;
+    root["webSearch"] = m_webSearchEnabled;
     root["history"] = m_conversationMessages;
     root["nextNoteId"] = m_nextNoteId;
     
@@ -996,6 +1118,7 @@ void ClaudeController::loadSessionFromDisk() {
         m_apiKey = root["apiKey"].toString();
     }
     m_thinkingEnabled = root["thinking"].toBool(false);
+    m_webSearchEnabled = root["webSearch"].toBool(false);
     if (root.contains("history") && root["history"].isArray()) {
         m_conversationMessages = root["history"].toArray();
         while (m_conversationMessages.size() > 10) {

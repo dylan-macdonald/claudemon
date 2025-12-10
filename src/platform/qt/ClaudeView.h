@@ -58,6 +58,7 @@ private:
     QLabel* m_statusLabel;
     QComboBox* m_modelCombo;
     QCheckBox* m_thinkingCheck;
+    QCheckBox* m_webSearchCheck;
     
     // Claude Response section
     QGroupBox* m_responseGroup;

@@ -65,6 +65,9 @@ public:
 
     void setThinkingEnabled(bool enabled);
     bool thinkingEnabled() const { return m_thinkingEnabled; }
+    
+    void setWebSearchEnabled(bool enabled);
+    bool webSearchEnabled() const { return m_webSearchEnabled; }
 
     void startGameLoop();
     void stopGameLoop();
@@ -100,6 +103,8 @@ private:
     QByteArray captureScreenshotData();
     QString parseInputsFromResponse(const QString& response, QList<ClaudeInput>& inputs);
     void parseNotesFromResponse(const QString& response);
+    void parseSearchRequestFromResponse(const QString& response);
+    void performWebSearch(const QString& query);
     void addNote(const QString& content);
     void clearNote(int noteId);
     void clearAllNotes();
@@ -141,10 +146,12 @@ private:
     // Session state
     Model m_model;
     bool m_thinkingEnabled;
+    bool m_webSearchEnabled;
     QJsonArray m_conversationMessages;
     QList<InputHistoryEntry> m_recentInputs;
     QList<ClaudeNote> m_claudeNotes;
     int m_nextNoteId;
+    QString m_pendingSearchResults;
     
     struct PendingInput {
         int keyCode;

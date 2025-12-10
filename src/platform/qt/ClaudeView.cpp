@@ -55,6 +55,9 @@ void ClaudeView::setupUI() {
 
     m_thinkingCheck = new QCheckBox("Thinking", this);
     modelLayout->addWidget(m_thinkingCheck);
+    
+    m_webSearchCheck = new QCheckBox("Web Search", this);
+    modelLayout->addWidget(m_webSearchCheck);
     modelLayout->addStretch();
     
     QHBoxLayout* controlLayout = new QHBoxLayout;
@@ -167,6 +170,7 @@ void ClaudeView::setClaudeController(ClaudeController* controller) {
         int idx = m_modelCombo->findData(QVariant::fromValue(static_cast<int>(model)));
         if (idx >= 0) m_modelCombo->setCurrentIndex(idx);
         m_thinkingCheck->setChecked(m_claudeController->thinkingEnabled());
+        m_webSearchCheck->setChecked(m_claudeController->webSearchEnabled());
         
         // Update notes display
         onClaudeNotesChanged();
@@ -198,7 +202,8 @@ void ClaudeView::onStartStopClicked() {
             model = static_cast<ClaudeController::Model>(data.toInt());
         }
         m_claudeController->setModel(model);
-    m_claudeController->setThinkingEnabled(m_thinkingCheck->isChecked());
+        m_claudeController->setThinkingEnabled(m_thinkingCheck->isChecked());
+        m_claudeController->setWebSearchEnabled(m_webSearchCheck->isChecked());
         
         m_claudeController->setApiKey(apiKey);
         m_claudeController->startGameLoop();
