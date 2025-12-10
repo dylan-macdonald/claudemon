@@ -50,6 +50,7 @@ ClaudeController::ClaudeController(QObject* parent)
     , m_backoffMultiplier(1)
     , m_model(ModelSonnet)
     , m_thinkingEnabled(false)
+    , m_nextNoteId(1)
     , m_currentKey(-1)
     , m_currentKeyIsDirectional(false)
 {
@@ -293,6 +294,15 @@ void ClaudeController::captureAndSendScreenshot() {
         promptText += "\n";
     }
     
+    // Add notes if we have any
+    if (!m_claudeNotes.isEmpty()) {
+        promptText += "Your notes:\n";
+        for (const auto& note : m_claudeNotes) {
+            promptText += QString("[%1] Note #%2: %3\n").arg(note.timestamp).arg(note.id).arg(note.content);
+        }
+        promptText += "You can add notes with [NOTE: message], clear specific notes with [CLEAR NOTE: #], or clear all with [CLEAR ALL NOTES].\n\n";
+    }
+    
     textContent["text"] = promptText;
     content.append(textContent);
     
@@ -499,6 +509,7 @@ void ClaudeController::handleApiResponse() {
                 
                 QList<ClaudeInput> inputs;
                 parseInputsFromResponse(responseText, inputs);
+                parseNotesFromResponse(responseText);
                 m_lastInputs = inputs;
 
                 // Append assistant message to history (text only)
@@ -618,6 +629,71 @@ QString ClaudeController::parseInputsFromResponse(const QString& response, QList
     }
     
     return response;
+}
+
+void ClaudeController::parseNotesFromResponse(const QString& response) {
+    // Look for [NOTE: ...] commands
+    QRegularExpression noteRegex("\\[NOTE:\\s*(.+?)\\]", QRegularExpression::CaseInsensitiveOption);
+    QRegularExpressionMatchIterator noteIt = noteRegex.globalMatch(response);
+    
+    while (noteIt.hasNext()) {
+        QRegularExpressionMatch match = noteIt.next();
+        QString noteContent = match.captured(1).trimmed();
+        if (!noteContent.isEmpty()) {
+            addNote(noteContent);
+        }
+    }
+    
+    // Look for [CLEAR NOTE: X] commands
+    QRegularExpression clearNoteRegex("\\[CLEAR\\s+NOTE:\\s*(\\d+)\\]", QRegularExpression::CaseInsensitiveOption);
+    QRegularExpressionMatchIterator clearIt = clearNoteRegex.globalMatch(response);
+    
+    while (clearIt.hasNext()) {
+        QRegularExpressionMatch match = clearIt.next();
+        int noteId = match.captured(1).toInt();
+        clearNote(noteId);
+    }
+    
+    // Look for [CLEAR ALL NOTES] command
+    if (response.contains(QRegularExpression("\\[CLEAR\\s+ALL\\s+NOTES\\]", QRegularExpression::CaseInsensitiveOption))) {
+        clearAllNotes();
+    }
+}
+
+void ClaudeController::addNote(const QString& content) {
+    ClaudeNote note;
+    note.id = m_nextNoteId++;
+    note.timestamp = QDateTime::currentDateTime().toString("hh:mm:ss");
+    note.content = content;
+    
+    m_claudeNotes.append(note);
+    
+    // Keep only last 10 notes (FIFO)
+    while (m_claudeNotes.size() > 10) {
+        m_claudeNotes.removeFirst();
+    }
+    
+    emit notesChanged();
+    saveSessionToDisk(); // Persist notes
+}
+
+void ClaudeController::clearNote(int noteId) {
+    for (int i = 0; i < m_claudeNotes.size(); ++i) {
+        if (m_claudeNotes[i].id == noteId) {
+            m_claudeNotes.removeAt(i);
+            emit notesChanged();
+            saveSessionToDisk();
+            break;
+        }
+    }
+}
+
+void ClaudeController::clearAllNotes() {
+    if (!m_claudeNotes.isEmpty()) {
+        m_claudeNotes.clear();
+        emit notesChanged();
+        saveSessionToDisk();
+    }
 }
 
 void ClaudeController::processInputs(const QList<ClaudeInput>& inputs) {
@@ -773,6 +849,18 @@ void ClaudeController::saveSessionToDisk() {
     root["apiKey"] = m_apiKey;
     root["thinking"] = m_thinkingEnabled;
     root["history"] = m_conversationMessages;
+    root["nextNoteId"] = m_nextNoteId;
+    
+    // Save notes
+    QJsonArray notesArray;
+    for (const ClaudeNote& note : m_claudeNotes) {
+        QJsonObject noteObj;
+        noteObj["id"] = note.id;
+        noteObj["timestamp"] = note.timestamp;
+        noteObj["content"] = note.content;
+        notesArray.append(noteObj);
+    }
+    root["notes"] = notesArray;
 
     QJsonDocument doc(root);
     QString basePath = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
@@ -823,6 +911,23 @@ void ClaudeController::loadSessionFromDisk() {
         m_conversationMessages = root["history"].toArray();
         while (m_conversationMessages.size() > 10) {
             m_conversationMessages.removeFirst();
+        }
+    }
+    
+    // Load notes
+    m_nextNoteId = root["nextNoteId"].toInt(1);
+    if (root.contains("notes") && root["notes"].isArray()) {
+        m_claudeNotes.clear();
+        QJsonArray notesArray = root["notes"].toArray();
+        for (const QJsonValue& noteVal : notesArray) {
+            if (noteVal.isObject()) {
+                QJsonObject noteObj = noteVal.toObject();
+                ClaudeNote note;
+                note.id = noteObj["id"].toInt();
+                note.timestamp = noteObj["timestamp"].toString();
+                note.content = noteObj["content"].toString();
+                m_claudeNotes.append(note);
+            }
         }
     }
 }

@@ -34,6 +34,12 @@ struct InputHistoryEntry {
     QString input;
 };
 
+struct ClaudeNote {
+    int id;
+    QString timestamp;
+    QString content;
+};
+
 class ClaudeController : public QObject {
 Q_OBJECT
 
@@ -68,6 +74,9 @@ public:
     QString getLastResponse() const { return m_lastResponse; }
     QList<ClaudeInput> getLastInputs() const { return m_lastInputs; }
     
+    // Notes system
+    QList<ClaudeNote> getNotes() const { return m_claudeNotes; }
+    
     // Error state
     QString getLastError() const { return m_lastError; }
     int getConsecutiveErrors() const { return m_consecutiveErrors; }
@@ -75,6 +84,7 @@ public:
 signals:
     void responseReceived(const QString& response);
     void inputsGenerated(const QList<ClaudeInput>& inputs);
+    void notesChanged();
     void errorOccurred(const QString& error);
     void criticalError(const QString& error, const QString& errorCode);
     void loopTick();
@@ -89,6 +99,10 @@ private slots:
 private:
     QByteArray captureScreenshotData();
     QString parseInputsFromResponse(const QString& response, QList<ClaudeInput>& inputs);
+    void parseNotesFromResponse(const QString& response);
+    void addNote(const QString& content);
+    void clearNote(int noteId);
+    void clearAllNotes();
     void sendInputToGame(const QString& button, int count);
     int getGBAKeyCode(const QString& button);
     void handleCriticalError(const QString& error, const QString& errorCode);
@@ -127,6 +141,8 @@ private:
     bool m_thinkingEnabled;
     QJsonArray m_conversationMessages;
     QList<InputHistoryEntry> m_recentInputs;
+    QList<ClaudeNote> m_claudeNotes;
+    int m_nextNoteId;
     
     struct PendingInput {
         int keyCode;

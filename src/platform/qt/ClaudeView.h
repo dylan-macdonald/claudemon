@@ -36,6 +36,7 @@ private slots:
     void onApiKeyChanged();
     void onClaudeResponseReceived(const QString& response);
     void onClaudeInputsGenerated(const QList<ClaudeInput>& inputs);
+    void onClaudeNotesChanged();
     void onClaudeErrorOccurred(const QString& error);
     void onClaudeCriticalError(const QString& error, const QString& errorCode);
     void onLoopTick();
@@ -65,6 +66,10 @@ private:
     // Input History section
     QGroupBox* m_inputGroup;
     QListWidget* m_inputList;
+    
+    // Notes section
+    QGroupBox* m_notesGroup;
+    QListWidget* m_notesList;
     
     // Status section
     QGroupBox* m_statusGroup;

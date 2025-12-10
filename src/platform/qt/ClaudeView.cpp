@@ -93,6 +93,14 @@ void ClaudeView::setupUI() {
     inputLayout->addWidget(m_inputList);
     rightLayout->addWidget(m_inputGroup);
     
+    // Notes Section (Right middle)
+    m_notesGroup = new QGroupBox("Claude's Notes", this);
+    QVBoxLayout* notesLayout = new QVBoxLayout(m_notesGroup);
+    m_notesList = new QListWidget(this);
+    m_notesList->setMaximumHeight(150); // Keep it compact
+    notesLayout->addWidget(m_notesList);
+    rightLayout->addWidget(m_notesGroup);
+    
     // Status Section (Right bottom)
     m_statusGroup = new QGroupBox("Status", this);
     QGridLayout* statusLayout = new QGridLayout(m_statusGroup);
@@ -139,6 +147,8 @@ void ClaudeView::setClaudeController(ClaudeController* controller) {
                 this, &ClaudeView::onClaudeResponseReceived);
         connect(m_claudeController, &ClaudeController::inputsGenerated, 
                 this, &ClaudeView::onClaudeInputsGenerated);
+        connect(m_claudeController, &ClaudeController::notesChanged, 
+                this, &ClaudeView::onClaudeNotesChanged);
         connect(m_claudeController, &ClaudeController::errorOccurred, 
                 this, &ClaudeView::onClaudeErrorOccurred);
         connect(m_claudeController, &ClaudeController::criticalError, 
@@ -157,6 +167,9 @@ void ClaudeView::setClaudeController(ClaudeController* controller) {
         int idx = m_modelCombo->findData(QVariant::fromValue(static_cast<int>(model)));
         if (idx >= 0) m_modelCombo->setCurrentIndex(idx);
         m_thinkingCheck->setChecked(m_claudeController->thinkingEnabled());
+        
+        // Update notes display
+        onClaudeNotesChanged();
     }
     
     updateButtonStates();
@@ -242,6 +255,21 @@ void ClaudeView::onClaudeInputsGenerated(const QList<ClaudeInput>& inputs) {
     while (m_inputList->count() > 100) {
         delete m_inputList->takeItem(0);
     }
+}
+
+void ClaudeView::onClaudeNotesChanged() {
+    if (!m_claudeController) return;
+    
+    m_notesList->clear();
+    
+    QList<ClaudeNote> notes = m_claudeController->getNotes();
+    for (const ClaudeNote& note : notes) {
+        QString noteText = QString("[%1] #%2: %3").arg(note.timestamp).arg(note.id).arg(note.content);
+        m_notesList->addItem(noteText);
+    }
+    
+    // Auto-scroll to bottom to show latest notes
+    m_notesList->scrollToBottom();
 }
 
 void ClaudeView::onClaudeErrorOccurred(const QString& error) {
