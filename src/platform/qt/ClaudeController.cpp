@@ -52,6 +52,9 @@ ClaudeController::ClaudeController(QObject* parent)
     , m_thinkingEnabled(false)
     , m_webSearchEnabled(false)
     , m_nextNoteId(1)
+    , m_lastKnownX(-1)
+    , m_lastKnownY(-1)
+    , m_hasKnownPosition(false)
     , m_currentKey(-1)
     , m_currentKeyIsDirectional(false)
 {
@@ -299,31 +302,63 @@ void ClaudeController::captureAndSendScreenshot() {
     QJsonObject textContent;
     textContent["type"] = "text";
     
-    QString promptText = "You are playing Pokemon Emerald on a Game Boy Advance emulator. "
-                         "Look at this screenshot and decide what button to press next. "
-                         "Your goal is to make progress in the game. "
-                         "Respond with ONLY a simple button command like 'a', 'start', 'up 3', 'b 2', etc. "
-                         "Valid buttons: a, b, start, select, up, down, left, right, l, r. "
-                         "You can add a number after for repeats (max 10). "
-                         "Do not include any other text or explanation. "
-                         "Do not include reasoning text; only the button command.\n\n";
+    QString promptText = "You are Claude, playing Pokemon Emerald. You see screenshots and output button inputs. You have persistent notes that survive between turns - USE THEM.\n\n"
+                         "## Inputs\n"
+                         "a, b, start, select, up, down, left, right, l, r\n"
+                         "Add number for duration: \"up 3\" = hold up\n"
+                         "Chain inputs: \"a a a\" or \"up 2 right a\"\n\n"
+                         "## Notes (YOUR MEMORY - USE CONSTANTLY)\n"
+                         "[NOTE: message] - save a note\n"
+                         "[CLEAR NOTE: 3] - delete note 3\n"
+                         "[CLEAR ALL NOTES] - clear all\n\n"
+                         "Write notes about:\n"
+                         "- Current objective\n"
+                         "- What you just tried and whether it worked\n"
+                         "- Things you noticed (NPCs, objects, dialogue hints)\n"
+                         "- Failed attempts so you don't repeat them\n\n"
+                         "## Response Format (FOLLOW THIS EXACTLY)\n\n"
+                         "SCREEN: [One sentence - what you see]\n\n"
+                         "OBJECTIVE: [What you're trying to do - check your notes]\n\n"
+                         "ANALYSIS: [What options do you have? What have you tried? What's different now?]\n\n"
+                         "INPUTS: [your inputs]\n\n"
+                         "[NOTE: anything worth remembering]\n\n"
+                         "## Critical Rules\n\n"
+                         "1. IF STUCK: Do not repeat the same inputs. You have notes showing what failed. Try something NEW.\n\n"
+                         "2. BEFORE MOVING: Ask \"is there something I should interact with first?\" Press A on objects, NPCs, items before trying to leave an area.\n\n"
+                         "3. READ DIALOGUE: NPCs tell you what to do. Note important hints.\n\n"
+                         "4. CHECK YOUR NOTES: Every turn, read your notes. They tell you what you already tried.\n\n"
+                         "5. POKEMON EMERALD START:\n"
+                         "   - After the truck, you're in your bedroom\n"
+                         "   - You MUST set the wall clock before leaving (interact with it)\n"
+                         "   - Then go downstairs, mom talks about TV\n"
+                         "   - Then you can leave the house\n"
+                         "   - DO NOT spam down to leave before setting clock - it won't work\n\n"
+                         "6. ONE THING AT A TIME: Don't try to do everything. Set one objective, achieve it, then set the next.\n\n";
     
-    // Add input history if we have any
-    if (!m_recentInputs.isEmpty()) {
-        promptText += "Recent inputs (to avoid repetition):\n";
-        for (const auto& inputEntry : m_recentInputs) {
-            promptText += QString("%1: %2\n").arg(inputEntry.timestamp, inputEntry.input);
+    // Add input history by turns - CRITICAL for preventing loops
+    if (!m_turnHistory.isEmpty()) {
+        promptText += "## Recent Input History (last 10 turns):\n";
+        for (int i = 0; i < m_turnHistory.size(); ++i) {
+            const auto& turn = m_turnHistory[i];
+            promptText += QString("Turn %1: %2\n").arg(i + 1).arg(turn.inputs.join(", "));
         }
         promptText += "\n";
+    } else {
+        promptText += "## Recent Input History:\n";
+        promptText += "No previous inputs recorded.\n\n";
     }
     
-    // Add notes if we have any
+    // Add notes - CRITICAL for Claude's memory
     if (!m_claudeNotes.isEmpty()) {
-        promptText += "Your notes:\n";
-        for (const auto& note : m_claudeNotes) {
-            promptText += QString("[%1] Note #%2: %3\n").arg(note.timestamp).arg(note.id).arg(note.content);
+        promptText += "## Your Current Notes:\n";
+        for (int i = 0; i < m_claudeNotes.size(); ++i) {
+            const auto& note = m_claudeNotes[i];
+            promptText += QString("%1. %2\n").arg(i + 1).arg(note.content);
         }
-        promptText += "You can add notes with [NOTE: message], clear specific notes with [CLEAR NOTE: #], or clear all with [CLEAR ALL NOTES].\n\n";
+        promptText += "\n";
+    } else {
+        promptText += "## Your Current Notes:\n";
+        promptText += "You have no notes. Use [NOTE: ...] to remember things.\n\n";
     }
     
     // Check for stuck detection
@@ -346,8 +381,11 @@ void ClaudeController::captureAndSendScreenshot() {
     
     // Add search instruction if web search is enabled
     if (m_webSearchEnabled) {
-        promptText += "You can search for information with [SEARCH: query here].\n";
+        promptText += "You can search for information with [SEARCH: query here].\n\n";
     }
+    
+    // Final instruction
+    promptText += "What do you do?";
     
     textContent["text"] = promptText;
     content.append(textContent);
@@ -544,19 +582,38 @@ void ClaudeController::handleApiResponse() {
     resetBackoff();
     m_gameLoopTimer->setInterval(LOOP_INTERVAL_MS);
     
-    // Parse content
+    // Parse content - handle both thinking and text blocks
     if (response.contains("content")) {
         QJsonArray contentArray = response["content"].toArray();
         if (!contentArray.isEmpty()) {
-            QJsonObject firstContent = contentArray[0].toObject();
-            if (firstContent["type"].toString() == "text") {
-                QString responseText = firstContent["text"].toString();
-                m_lastResponse = responseText;
+            // When thinking is enabled, we get both "thinking" and "text" blocks
+            // We need to extract only the "text" blocks for actual game inputs
+            QString allTextContent;
+            bool foundTextContent = false;
+            
+            for (const QJsonValue& contentVal : contentArray) {
+                QJsonObject contentObj = contentVal.toObject();
+                if (contentObj["type"].toString() == "text") {
+                    QString textContent = contentObj["text"].toString();
+                    if (!allTextContent.isEmpty()) {
+                        allTextContent += "\n";
+                    }
+                    allTextContent += textContent;
+                    foundTextContent = true;
+                }
+                // Skip "thinking" blocks - they're just internal reasoning
+            }
+            
+            if (foundTextContent) {
+                m_lastResponse = allTextContent;
                 
+                // CRITICAL: Parse notes FIRST before doing anything else
+                parseNotesFromResponse(allTextContent);
+                parseSearchRequestFromResponse(allTextContent);
+                
+                // Then parse inputs
                 QList<ClaudeInput> inputs;
-                parseInputsFromResponse(responseText, inputs);
-                parseNotesFromResponse(responseText);
-                parseSearchRequestFromResponse(responseText);
+                parseInputsFromResponse(allTextContent, inputs);
                 m_lastInputs = inputs;
 
                 // Append assistant message to history (text only)
@@ -565,7 +622,7 @@ void ClaudeController::handleApiResponse() {
                 QJsonArray assistantContent;
                 QJsonObject assistantText;
                 assistantText["type"] = "text";
-                assistantText["text"] = responseText;
+                assistantText["text"] = allTextContent;
                 assistantContent.append(assistantText);
                 assistantMsg["content"] = assistantContent;
                 m_conversationMessages.append(assistantMsg);
@@ -576,12 +633,13 @@ void ClaudeController::handleApiResponse() {
                 }
                 saveSessionToDisk();
                 
-                emit responseReceived(responseText);
+                emit responseReceived(allTextContent);
                 emit inputsGenerated(inputs);
                 
+                // Process inputs LAST, after notes are saved
                 processInputs(inputs);
             } else {
-                emit errorOccurred("Unexpected response format (no text content)");
+                emit errorOccurred("No text content found in response (only thinking blocks)");
             }
         } else {
             emit errorOccurred("Empty response content");
@@ -638,16 +696,35 @@ void ClaudeController::saveGameState() {
 QString ClaudeController::parseInputsFromResponse(const QString& response, QList<ClaudeInput>& inputs) {
     inputs.clear();
     
-    // Simple parsing - look for button commands
-    QString trimmed = response.trimmed().toLower();
+    // First, try to find the INPUTS: line specifically
+    QStringList lines = response.split('\n');
+    QString inputLine;
     
-    // Remove any punctuation and extra whitespace
-    trimmed = trimmed.replace(QRegularExpression("[.,!?;:]"), " ");
-    trimmed = trimmed.simplified();
+    for (const QString& line : lines) {
+        QString trimmedLine = line.trimmed().toLower();
+        if (trimmedLine.startsWith("inputs:") || trimmedLine.startsWith("input:") || 
+            trimmedLine.startsWith("actions:") || trimmedLine.startsWith("action:")) {
+            inputLine = line.mid(line.indexOf(':') + 1).trimmed();
+            break;
+        }
+    }
     
-    // Parse patterns like "up 3", "a", "start", "b 2"
+    // If we didn't find an INPUTS: line, fall back to searching the whole response
+    if (inputLine.isEmpty()) {
+        inputLine = response;
+    }
+    
+    // Clean up the input line
+    QString cleaned = inputLine.toLower();
+    // Remove markdown formatting
+    cleaned = cleaned.replace(QRegularExpression("[`*_]"), "");
+    // Remove punctuation but keep spaces
+    cleaned = cleaned.replace(QRegularExpression("[.,!?;:\"']"), " ");
+    cleaned = cleaned.simplified();
+    
+    // Parse patterns like "up 3", "a", "start", "b 2", "a a a"
     QRegularExpression re("\\b(up|down|left|right|a|b|l|r|start|select)(?:\\s+(\\d+))?\\b");
-    QRegularExpressionMatchIterator it = re.globalMatch(trimmed);
+    QRegularExpressionMatchIterator it = re.globalMatch(cleaned);
     
     while (it.hasNext()) {
         QRegularExpressionMatch match = it.next();
@@ -660,19 +737,30 @@ QString ClaudeController::parseInputsFromResponse(const QString& response, QList
         inputs.append(input);
     }
     
-    // If no specific pattern found, try to extract just the first button name
+    // If no inputs found at all, try emergency fallback with just button names
     if (inputs.isEmpty()) {
         QStringList buttonNames = {"up", "down", "left", "right", "a", "b", "l", "r", "start", "select"};
         for (const QString& button : buttonNames) {
-            if (trimmed.contains(button)) {
+            if (cleaned.contains(button)) {
                 ClaudeInput input;
                 input.button = button;
                 input.count = 1;
                 input.reasoning = response;
                 inputs.append(input);
+                qDebug() << "Emergency fallback: found button" << button;
                 break; // Only take the first match
             }
         }
+    }
+    
+    // Ultimate fallback - if still no inputs, send 'a' to keep the game moving
+    if (inputs.isEmpty()) {
+        ClaudeInput input;
+        input.button = "a";
+        input.count = 1;
+        input.reasoning = "No valid inputs found, defaulting to A button";
+        inputs.append(input);
+        qDebug() << "Ultimate fallback: no inputs found, sending 'a'";
     }
     
     return response;
@@ -744,39 +832,46 @@ void ClaudeController::clearAllNotes() {
 }
 
 QString ClaudeController::checkForStuckPattern() const {
-    if (m_recentInputs.size() < 5) {
-        return QString(); // Not enough inputs to detect pattern
+    if (m_turnHistory.size() < 2) {
+        return QString(); // Need at least 2 turns to detect patterns
     }
     
-    // Check for consecutive directional inputs (last 5+ inputs)
-    QString lastDirection;
-    int consecutiveCount = 0;
+    // Check for repeated directional inputs across recent turns
+    QString repeatedDirection;
+    int directionCount = 0;
+    bool hasRecentMovement = false;
     
-    // Look at the last 10 inputs to find consecutive patterns
-    int startCheck = qMax(0, m_recentInputs.size() - 10);
-    for (int i = m_recentInputs.size() - 1; i >= startCheck; --i) {
-        QString input = m_recentInputs[i].input;
+    // Look at last 3 turns for patterns
+    int turnsToCheck = qMin(3, m_turnHistory.size());
+    for (int i = m_turnHistory.size() - turnsToCheck; i < m_turnHistory.size(); ++i) {
+        const auto& turn = m_turnHistory[i];
         
-        // Extract button name (ignore counts like "x2", "x3")
-        QString button = input.split(" ").first().toLower();
-        
-        if (isDirectionalButton(button)) {
-            if (button == lastDirection) {
-                consecutiveCount++;
-            } else {
-                // Different direction, reset count
-                lastDirection = button;
-                consecutiveCount = 1;
+        for (const QString& input : turn.inputs) {
+            QString button = input.split(" ").first().toLower();
+            
+            if (isDirectionalButton(button)) {
+                hasRecentMovement = true;
+                if (repeatedDirection.isEmpty()) {
+                    repeatedDirection = button;
+                    directionCount = 1;
+                } else if (button == repeatedDirection) {
+                    directionCount++;
+                }
             }
-        } else {
-            // Non-directional input breaks the pattern
-            break;
         }
     }
     
-    if (consecutiveCount >= 5) {
-        return QString("WARNING: You've pressed '%1' %2 times consecutively. You may be stuck. Try a different approach.")
-               .arg(lastDirection.toUpper()).arg(consecutiveCount);
+    // Trigger stuck detection if same direction used 4+ times across recent turns
+    if (directionCount >= 4 && hasRecentMovement) {
+        QString advice = QString("## STUCK WARNING\n"
+                               "You've pressed %1 repeatedly without progress. This usually means:\n"
+                               "1. There's an obstacle or NPC blocking you\n"
+                               "2. You need to complete an action first (interact with something, set clock, talk to someone)\n"
+                               "3. You're in a menu and need to press B to exit\n\n"
+                               "Try: Press A to interact with whatever is in front of you, or look for objects in the room you haven't examined.")
+                              .arg(repeatedDirection.toUpper());
+        
+        return advice;
     }
     
     return QString();
@@ -814,7 +909,23 @@ QString ClaudeController::readGameState() const {
         int y = gameState["y"].toInt();
         bool inBattle = gameState["in_battle"].toBool();
         
-        return QString("Position: (%1, %2). In battle: %3").arg(x).arg(y).arg(inBattle ? "yes" : "no");
+        QString result = QString("## Game State\nPosition: (%1, %2). In battle: %3").arg(x).arg(y).arg(inBattle ? "yes" : "no");
+        
+        // Check if position changed since last turn (for stuck detection)
+        if (m_hasKnownPosition) {
+            bool positionChanged = (x != m_lastKnownX || y != m_lastKnownY);
+            result += QString("\nPosition changed since last turn: %1").arg(positionChanged ? "Yes" : "No");
+            if (!positionChanged && (m_lastKnownX != -1 && m_lastKnownY != -1)) {
+                result += " (may be stuck!)";
+            }
+        }
+        
+        // Update position tracking
+        m_lastKnownX = x;
+        m_lastKnownY = y;
+        m_hasKnownPosition = true;
+        
+        return result;
     }
     
     return QString();
@@ -914,6 +1025,8 @@ void ClaudeController::processInputs(const QList<ClaudeInput>& inputs) {
     
     // Record inputs to history
     QString timestamp = QDateTime::currentDateTime().toString("hh:mm:ss");
+    QStringList turnInputs;
+    
     for (const ClaudeInput& input : inputs) {
         int keyCode = getGBAKeyCode(input.button);
         if (keyCode >= 0) {
@@ -933,17 +1046,34 @@ void ClaudeController::processInputs(const QList<ClaudeInput>& inputs) {
             
             m_pendingInputs.append(pendingInput);
             
-            // Add to input history
+            // Add to individual input history (for backwards compatibility)
             InputHistoryEntry entry;
             entry.timestamp = timestamp;
             entry.input = input.count > 1 ? QString("%1 x%2").arg(input.button).arg(input.count) : input.button;
             m_recentInputs.append(entry);
+            
+            // Add to turn history
+            QString turnInput = input.count > 1 ? QString("%1 x%2").arg(input.button).arg(input.count) : input.button;
+            turnInputs.append(turnInput);
         } else {
             qDebug() << "Unknown button:" << input.button;
         }
     }
     
-    // Keep only last 15 inputs
+    // Record this turn if we had any valid inputs
+    if (!turnInputs.isEmpty()) {
+        TurnHistory turn;
+        turn.timestamp = timestamp;
+        turn.inputs = turnInputs;
+        m_turnHistory.append(turn);
+        
+        // Keep only last 10 turns
+        while (m_turnHistory.size() > 10) {
+            m_turnHistory.removeFirst();
+        }
+    }
+    
+    // Keep only last 15 individual inputs
     while (m_recentInputs.size() > 15) {
         m_recentInputs.removeFirst();
     }

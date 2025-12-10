@@ -34,6 +34,11 @@ struct InputHistoryEntry {
     QString input;
 };
 
+struct TurnHistory {
+    QString timestamp;
+    QStringList inputs;
+};
+
 struct ClaudeNote {
     int id;
     QString timestamp;
@@ -149,9 +154,15 @@ private:
     bool m_webSearchEnabled;
     QJsonArray m_conversationMessages;
     QList<InputHistoryEntry> m_recentInputs;
+    QList<TurnHistory> m_turnHistory;
     QList<ClaudeNote> m_claudeNotes;
     int m_nextNoteId;
     QString m_pendingSearchResults;
+    
+    // Position tracking for stuck detection
+    int m_lastKnownX;
+    int m_lastKnownY;
+    bool m_hasKnownPosition;
     
     struct PendingInput {
         int keyCode;
