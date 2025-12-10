@@ -55,6 +55,10 @@ ClaudeController::ClaudeController(QObject* parent)
     , m_lastKnownX(-1)
     , m_lastKnownY(-1)
     , m_hasKnownPosition(false)
+    , m_turnCounter(0)
+    , m_positionBeforeX(-1)
+    , m_positionBeforeY(-1)
+    , m_hasPositionBefore(false)
     , m_currentKey(-1)
     , m_currentKeyIsDirectional(false)
 {
@@ -250,17 +254,26 @@ void ClaudeController::captureAndSendScreenshot() {
     if (!m_coreController || !m_running) {
         return;
     }
-    
+
     // Guard against concurrent requests
     if (m_requestInFlight) {
         qDebug() << "Request already in flight, skipping this tick";
         return;
     }
-    
+
+    // VERIFICATION SYSTEM: Capture position BEFORE taking the screenshot
+    // This will be our "position before" for the turn record
+    m_hasPositionBefore = m_hasKnownPosition;
+    m_positionBeforeX = m_lastKnownX;
+    m_positionBeforeY = m_lastKnownY;
+
+    // Validate notes against ground truth at the start of each turn
+    validateNotesAgainstGroundTruth();
+
     // Capture actual screenshot data
-    QByteArray imageData = captureScreenshotData();
-    
-    if (imageData.isEmpty()) {
+    QByteArray currentScreenshot = captureScreenshotData();
+
+    if (currentScreenshot.isEmpty()) {
         emit errorOccurred("Failed to capture screenshot");
         return;
     }
@@ -302,7 +315,27 @@ void ClaudeController::captureAndSendScreenshot() {
     QJsonObject textContent;
     textContent["type"] = "text";
     
-    QString promptText = "You are Claude, playing Pokemon Emerald. You see screenshots and output button inputs. You have persistent notes that survive between turns - USE THEM.\n\n"
+    QString promptText = "You are Claude, playing Pokemon Emerald.\n\n"
+                         "## CRITICAL: VERIFY BEFORE BELIEVING\n\n"
+                         "YOU HAVE A PROBLEM: You confuse your INTENTIONS with RESULTS.\n"
+                         "When you say \"I'll press down to leave,\" your brain writes \"I left\" before you see proof.\n"
+                         "This is WRONG. You must VERIFY outcomes before updating your beliefs.\n\n"
+                         "RULES:\n"
+                         "1. ASSUME FAILURE until the screenshot PROVES success\n"
+                         "2. \"I pressed A\" does NOT mean \"interaction happened\" - look for dialogue/menu\n"
+                         "3. \"I pressed down\" does NOT mean \"I moved\" - check if position changed\n"
+                         "4. Your notes may be WRONG if you wrote them based on prediction, not observation\n"
+                         "5. GROUND TRUTH (position, map) overrides your notes if they conflict\n\n"
+                         "WRONG PATTERN:\n"
+                         "- See bedroom -> \"I'll go downstairs\" -> press down -> [NOTE: I'm downstairs now]\n"
+                         "  (But you never verified you actually moved)\n\n"
+                         "RIGHT PATTERN:\n"
+                         "- See bedroom -> \"I'll try going down\" -> press down\n"
+                         "- (Next turn) -> See... still bedroom? -> \"Down didn't work, I'm still in bedroom\"\n"
+                         "- (Next turn) -> See stairs/new room? -> [NOTE: Made it downstairs]\n\n"
+                         "ONLY write progress notes when you SEE EVIDENCE of progress.\n"
+                         "Before writing ANY note about progress, ask: \"What in this screenshot PROVES this happened?\"\n"
+                         "If you can't answer, don't write the note.\n\n"
                          "## Inputs\n"
                          "a, b, start, select, up, down, left, right, l, r\n"
                          "Add number for duration: \"up 3\" = hold up\n"
@@ -313,15 +346,17 @@ void ClaudeController::captureAndSendScreenshot() {
                          "[CLEAR ALL NOTES] - clear all\n\n"
                          "Write notes about:\n"
                          "- Current objective\n"
-                         "- What you just tried and whether it worked\n"
+                         "- What you just tried and whether it ACTUALLY worked (verified)\n"
                          "- Things you noticed (NPCs, objects, dialogue hints)\n"
                          "- Failed attempts so you don't repeat them\n\n"
                          "## Response Format (FOLLOW THIS EXACTLY)\n\n"
-                         "SCREEN: [One sentence - what you see]\n\n"
+                         "VERIFICATION: [If this isn't turn 1: What was my last action? Did it work? What evidence do I see? Did position change? Did screen change?]\n\n"
+                         "BELIEF UPDATE: [Correct any wrong notes based on verification. If ground truth contradicts your notes, admit the error.]\n\n"
+                         "CURRENT SCREEN: [One sentence - what you see NOW]\n\n"
                          "OBJECTIVE: [What you're trying to do - check your notes]\n\n"
-                         "ANALYSIS: [What options do you have? What have you tried? What's different now?]\n\n"
+                         "PLAN: [What you'll try and what SUCCESS would look like]\n\n"
                          "INPUTS: [your inputs]\n\n"
-                         "[NOTE: anything worth remembering]\n\n"
+                         "[NOTE: only VERIFIED information - things you observed, not predicted]\n\n"
                          "## Critical Rules\n\n"
                          "1. IF STUCK: Do not repeat the same inputs. You have notes showing what failed. Try something NEW.\n\n"
                          "2. BEFORE MOVING: Ask \"is there something I should interact with first?\" Press A on objects, NPCs, items before trying to leave an area.\n\n"
@@ -347,13 +382,71 @@ void ClaudeController::captureAndSendScreenshot() {
         promptText += "## Recent Input History:\n";
         promptText += "No previous inputs recorded.\n\n";
     }
-    
-    // Add notes - CRITICAL for Claude's memory
+
+    // Add action-result history - CRITICAL for verification
+    if (!m_turnRecords.isEmpty()) {
+        promptText += "## ACTION HISTORY (Last 5 Turns with Results):\n";
+        int recordsToShow = qMin(5, m_turnRecords.size());
+        int startIdx = m_turnRecords.size() - recordsToShow;
+        for (int i = startIdx; i < m_turnRecords.size(); ++i) {
+            const auto& record = m_turnRecords[i];
+            QString posInfo;
+            if (record.hadPosition) {
+                posInfo = QString("(%1,%2) -> (%3,%4)")
+                    .arg(record.positionBeforeX).arg(record.positionBeforeY)
+                    .arg(record.positionAfterX).arg(record.positionAfterY);
+                if (!record.positionChanged) {
+                    posInfo += " [NO MOVEMENT]";
+                }
+            } else {
+                posInfo = "[position unknown]";
+            }
+            promptText += QString("Turn %1: %2 -> %3 (Position: %4)\n")
+                .arg(record.turnNumber)
+                .arg(record.inputs.join(", "))
+                .arg(record.result)
+                .arg(posInfo);
+            if (!record.resultReason.isEmpty()) {
+                promptText += QString("  Reason: %1\n").arg(record.resultReason);
+            }
+        }
+        promptText += "\n";
+
+        // Add interpretation help
+        int failedCount = 0;
+        QString lastFailedDirection;
+        for (int i = qMax(0, m_turnRecords.size() - 5); i < m_turnRecords.size(); ++i) {
+            if (m_turnRecords[i].result == "FAILED") {
+                failedCount++;
+                if (!m_turnRecords[i].inputs.isEmpty()) {
+                    QString firstInput = m_turnRecords[i].inputs.first();
+                    if (firstInput.contains("up") || firstInput.contains("down") ||
+                        firstInput.contains("left") || firstInput.contains("right")) {
+                        lastFailedDirection = firstInput;
+                    }
+                }
+            }
+        }
+
+        if (failedCount >= 3) {
+            promptText += QString("WARNING: %1 of your last 5 actions FAILED. ").arg(failedCount);
+            if (!lastFailedDirection.isEmpty()) {
+                promptText += QString("Movement (%1) is not working. ").arg(lastFailedDirection);
+            }
+            promptText += "You are likely stuck or need to do something else first (interact with object, talk to NPC, set clock).\n\n";
+        }
+    }
+
+    // Add notes - CRITICAL for Claude's memory (with verification status)
     if (!m_claudeNotes.isEmpty()) {
         promptText += "## Your Current Notes:\n";
         for (int i = 0; i < m_claudeNotes.size(); ++i) {
             const auto& note = m_claudeNotes[i];
-            promptText += QString("%1. %2\n").arg(i + 1).arg(note.content);
+            QString statusTag;
+            if (!note.verificationStatus.isEmpty()) {
+                statusTag = QString(" [%1]").arg(note.verificationStatus);
+            }
+            promptText += QString("%1. %2%3\n").arg(i + 1).arg(note.content).arg(statusTag);
         }
         promptText += "\n";
     } else {
@@ -367,10 +460,12 @@ void ClaudeController::captureAndSendScreenshot() {
         promptText += stuckWarning + "\n";
     }
     
-    // Add game state if available
+    // Add game state if available - GROUND TRUTH
     QString gameState = readGameState();
     if (!gameState.isEmpty()) {
+        promptText += "## GROUND TRUTH (This overrides your notes if they conflict)\n";
         promptText += gameState + "\n";
+        promptText += "If ground truth contradicts your notes, your notes are WRONG. Update your understanding.\n\n";
     }
     
     // Add search results if available
@@ -385,20 +480,41 @@ void ClaudeController::captureAndSendScreenshot() {
     }
     
     // Final instruction
+    if (!m_previousScreenshot.isEmpty()) {
+        promptText += "\n## TWO-SCREENSHOT COMPARISON\n";
+        promptText += "You will see TWO screenshots:\n";
+        promptText += "1. PREVIOUS screenshot (before your last action)\n";
+        promptText += "2. CURRENT screenshot (after your last action)\n\n";
+        promptText += "Compare them carefully:\n";
+        promptText += "- If position unchanged: your movement FAILED\n";
+        promptText += "- If no new dialogue/menu: your interaction FAILED\n";
+        promptText += "- If screen identical: NOTHING HAPPENED\n\n";
+        promptText += "Do not claim progress unless you can point to a specific change.\n\n";
+    }
     promptText += "What do you do?";
-    
+
     textContent["text"] = promptText;
     content.append(textContent);
-    
-    // Add image data
+
+    // Add previous screenshot if available (for comparison)
+    if (!m_previousScreenshot.isEmpty()) {
+        QJsonObject prevImageContent;
+        prevImageContent["type"] = "image";
+        QJsonObject prevSource;
+        prevSource["type"] = "base64";
+        prevSource["media_type"] = "image/png";
+        prevSource["data"] = QString(m_previousScreenshot.toBase64());
+        prevImageContent["source"] = prevSource;
+        content.append(prevImageContent);
+    }
+
+    // Add current screenshot
     QJsonObject imageContent;
     imageContent["type"] = "image";
-    
     QJsonObject source;
     source["type"] = "base64";
     source["media_type"] = "image/png";
-    source["data"] = QString(imageData.toBase64());
-    
+    source["data"] = QString(currentScreenshot.toBase64());
     imageContent["source"] = source;
     content.append(imageContent);
     
@@ -441,10 +557,13 @@ void ClaudeController::captureAndSendScreenshot() {
     
     m_requestInFlight = true;
     m_requestTimeoutTimer->start();
-    
+
     QNetworkReply* reply = m_networkManager->post(netRequest, data);
     connect(reply, &QNetworkReply::finished, this, &ClaudeController::handleApiResponse);
-    
+
+    // Store current screenshot for next turn's comparison
+    m_previousScreenshot = currentScreenshot;
+
     emit loopTick();
 }
 
@@ -615,6 +734,80 @@ void ClaudeController::handleApiResponse() {
                 QList<ClaudeInput> inputs;
                 parseInputsFromResponse(allTextContent, inputs);
                 m_lastInputs = inputs;
+
+                // Create turn record for verification system
+                if (!inputs.isEmpty()) {
+                    m_turnCounter++;
+                    TurnRecord record;
+                    record.turnNumber = m_turnCounter;
+                    record.timestamp = QDateTime::currentDateTime().toString("hh:mm:ss");
+                    for (const auto& input : inputs) {
+                        QString inputStr = input.button;
+                        if (input.count > 1) {
+                            inputStr += QString(" %1").arg(input.count);
+                        }
+                        record.inputs.append(inputStr);
+                    }
+
+                    // Position tracking
+                    record.hadPosition = m_hasPositionBefore;
+                    record.positionBeforeX = m_positionBeforeX;
+                    record.positionBeforeY = m_positionBeforeY;
+                    record.positionAfterX = m_lastKnownX;
+                    record.positionAfterY = m_lastKnownY;
+
+                    // Determine if position changed
+                    if (m_hasPositionBefore && m_hasKnownPosition) {
+                        record.positionChanged = (m_positionBeforeX != m_lastKnownX ||
+                                                 m_positionBeforeY != m_lastKnownY);
+                    } else {
+                        record.positionChanged = false;
+                    }
+
+                    // Determine success/failure
+                    // If it was a movement command and position didn't change, it failed
+                    bool isMovementCommand = false;
+                    for (const auto& input : inputs) {
+                        if (input.button == "up" || input.button == "down" ||
+                            input.button == "left" || input.button == "right") {
+                            isMovementCommand = true;
+                            break;
+                        }
+                    }
+
+                    if (isMovementCommand) {
+                        if (record.hadPosition) {
+                            if (record.positionChanged) {
+                                record.result = "SUCCESS";
+                                record.resultReason = "Position changed";
+                            } else {
+                                record.result = "FAILED";
+                                record.resultReason = "Position unchanged - movement blocked or action needed first";
+                            }
+                        } else {
+                            record.result = "UNKNOWN";
+                            record.resultReason = "Position data not available";
+                        }
+                    } else {
+                        // For non-movement commands (A, B, etc.), we can't easily verify
+                        // TODO: Could add dialogue detection in the future
+                        record.result = "UNKNOWN";
+                        record.resultReason = "Non-movement action - cannot auto-verify";
+                    }
+
+                    // Add to turn records (keep last 10)
+                    m_turnRecords.append(record);
+                    while (m_turnRecords.size() > 10) {
+                        m_turnRecords.removeFirst();
+                    }
+
+                    qDebug() << QString("Turn %1: %2 -> %3 (Position: %4,%5 -> %6,%7)")
+                        .arg(record.turnNumber)
+                        .arg(record.inputs.join(", "))
+                        .arg(record.result)
+                        .arg(record.positionBeforeX).arg(record.positionBeforeY)
+                        .arg(record.positionAfterX).arg(record.positionAfterY);
+                }
 
                 // Append assistant message to history (text only)
                 QJsonObject assistantMsg;
@@ -800,14 +993,16 @@ void ClaudeController::addNote(const QString& content) {
     note.id = m_nextNoteId++;
     note.timestamp = QDateTime::currentDateTime().toString("hh:mm:ss");
     note.content = content;
-    
+    note.verificationStatus = "UNVERIFIED"; // New notes are unverified by default
+    note.writtenThisTurn = true; // Mark as written this turn
+
     m_claudeNotes.append(note);
-    
+
     // Keep only last 10 notes (FIFO)
     while (m_claudeNotes.size() > 10) {
         m_claudeNotes.removeFirst();
     }
-    
+
     emit notesChanged();
     saveSessionToDisk(); // Persist notes
 }
@@ -826,6 +1021,59 @@ void ClaudeController::clearNote(int noteId) {
 void ClaudeController::clearAllNotes() {
     if (!m_claudeNotes.isEmpty()) {
         m_claudeNotes.clear();
+        emit notesChanged();
+        saveSessionToDisk();
+    }
+}
+
+void ClaudeController::validateNotesAgainstGroundTruth() {
+    // Clear writtenThisTurn flag for all notes from previous turn
+    for (auto& note : m_claudeNotes) {
+        note.writtenThisTurn = false;
+    }
+
+    // If we don't have position data, we can't validate location-based notes
+    if (!m_hasKnownPosition) {
+        return;
+    }
+
+    // Check notes for contradictions with ground truth
+    // Look for location claims that contradict current position
+    QStringList locationKeywords = {
+        "downstairs", "down stairs", "first floor", "1f",
+        "upstairs", "up stairs", "second floor", "2f", "bedroom",
+        "outside", "left the house", "left house", "exited",
+        "route 101", "littleroot", "town"
+    };
+
+    // Simple heuristic: if we're at the same position for multiple turns
+    // and notes claim we moved, mark them as contradicted
+    bool hasContradiction = false;
+    for (auto& note : m_claudeNotes) {
+        QString noteLC = note.content.toLower();
+
+        // Check for movement claims when position hasn't changed
+        if ((noteLC.contains("moved") || noteLC.contains("went") ||
+             noteLC.contains("left") || noteLC.contains("reached") ||
+             noteLC.contains("made it")) &&
+            !note.writtenThisTurn) {
+
+            // If the note was written in a previous turn and we haven't moved
+            // significantly from where we were when it was written, it might be wrong
+            // This is a simple heuristic - could be improved with more context
+
+            // For now, just mark location-specific claims as potentially contradicted
+            for (const QString& keyword : locationKeywords) {
+                if (noteLC.contains(keyword)) {
+                    note.verificationStatus = "CONTRADICTED";
+                    hasContradiction = true;
+                    break;
+                }
+            }
+        }
+    }
+
+    if (hasContradiction) {
         emit notesChanged();
         saveSessionToDisk();
     }
@@ -908,9 +1156,42 @@ QString ClaudeController::readGameState() {
         int x = gameState["x"].toInt();
         int y = gameState["y"].toInt();
         bool inBattle = gameState["in_battle"].toBool();
-        
-        QString result = QString("## Game State\nPosition: (%1, %2). In battle: %3").arg(x).arg(y).arg(inBattle ? "yes" : "no");
-        
+
+        QString result = QString("Position: (%1, %2)").arg(x).arg(y);
+
+        // Add map info if available
+        if (gameState.contains("map_group") && gameState.contains("map_num")) {
+            int mapGroup = gameState["map_group"].toInt();
+            int mapNum = gameState["map_num"].toInt();
+            result += QString("\nMap: Group %1, Num %2").arg(mapGroup).arg(mapNum);
+
+            // Add human-readable map names for common locations
+            // Map Group 0 = Littleroot Town area
+            if (mapGroup == 0) {
+                if (mapNum == 0) result += " (Petalburg City)";
+                else if (mapNum == 1) result += " (Slateport City)";
+                else if (mapNum == 2) result += " (Mauville City)";
+                else if (mapNum == 3) result += " (Rustboro City)";
+                else if (mapNum == 4) result += " (Fortree City)";
+                else if (mapNum == 5) result += " (Lilycove City)";
+                else if (mapNum == 6) result += " (Mossdeep City)";
+                else if (mapNum == 7) result += " (Sootopolis City)";
+                else if (mapNum == 8) result += " (Ever Grande City)";
+                else if (mapNum == 9) result += " (Littleroot Town)";
+                else if (mapNum == 10) result += " (Oldale Town)";
+            }
+            // Map Group 1 = Buildings/indoors
+            else if (mapGroup == 1) {
+                if (mapNum == 0) result += " (Player's House 1F)";
+                else if (mapNum == 1) result += " (Player's House 2F - Bedroom)";
+                else if (mapNum == 2) result += " (Rival's House 1F)";
+                else if (mapNum == 3) result += " (Rival's House 2F)";
+                else if (mapNum == 4) result += " (Prof Birch's Lab)";
+            }
+        }
+
+        result += QString("\nIn battle: %1").arg(inBattle ? "yes" : "no");
+
         // Check if position changed since last turn (for stuck detection)
         if (m_hasKnownPosition) {
             bool positionChanged = (x != m_lastKnownX || y != m_lastKnownY);
@@ -919,12 +1200,12 @@ QString ClaudeController::readGameState() {
                 result += " (may be stuck!)";
             }
         }
-        
+
         // Update position tracking
         m_lastKnownX = x;
         m_lastKnownY = y;
         m_hasKnownPosition = true;
-        
+
         return result;
     }
     

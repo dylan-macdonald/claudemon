@@ -43,6 +43,22 @@ struct ClaudeNote {
     int id;
     QString timestamp;
     QString content;
+    QString verificationStatus; // "UNVERIFIED", "VERIFIED", "CONTRADICTED"
+    bool writtenThisTurn; // Track if note was just written
+};
+
+struct TurnRecord {
+    int turnNumber;
+    QString timestamp;
+    QStringList inputs;
+    int positionBeforeX;
+    int positionBeforeY;
+    int positionAfterX;
+    int positionAfterY;
+    bool positionChanged;
+    bool hadPosition; // Whether position data was available
+    QString result; // "SUCCESS", "FAILED", "UNKNOWN"
+    QString resultReason; // Why it succeeded/failed
 };
 
 class ClaudeController : public QObject {
@@ -113,6 +129,7 @@ private:
     void addNote(const QString& content);
     void clearNote(int noteId);
     void clearAllNotes();
+    void validateNotesAgainstGroundTruth();
     QString checkForStuckPattern() const;
     QString readGameState();
     void sendInputToGame(const QString& button, int count);
@@ -163,7 +180,15 @@ private:
     int m_lastKnownX;
     int m_lastKnownY;
     bool m_hasKnownPosition;
-    
+
+    // Verification system
+    QByteArray m_previousScreenshot;
+    QList<TurnRecord> m_turnRecords;
+    int m_turnCounter;
+    int m_positionBeforeX;
+    int m_positionBeforeY;
+    bool m_hasPositionBefore;
+
     struct PendingInput {
         int keyCode;
         int remainingCount;

@@ -41,16 +41,23 @@ callbacks:add("frame", function()
         -- Read player position (at offset 0x00 in SaveBlock1)
         local posX = emu:read16(saveBlock1Base + 0x00)
         local posY = emu:read16(saveBlock1Base + 0x02)
-        
+
+        -- Read map info (at offset 0x04 in SaveBlock1)
+        local mapGroup = emu:read8(saveBlock1Base + 0x04)
+        local mapNum = emu:read8(saveBlock1Base + 0x05)
+
+        -- Read warp ID (at offset 0x06 in SaveBlock1)
+        local warpId = emu:read8(saveBlock1Base + 0x06)
+
         -- Check if in battle (gBattleMons address)
         local battleData = emu:read32(0x02024084)
         local inBattle = battleData ~= 0
-        
+
         -- Create JSON output
         local gameState = string.format(
-            '{"x": %d, "y": %d, "in_battle": %s, "frame": %d}',
-            posX, posY, 
-            inBattle and "true" or "false", 
+            '{"x": %d, "y": %d, "map_group": %d, "map_num": %d, "warp": %d, "in_battle": %s, "frame": %d}',
+            posX, posY, mapGroup, mapNum, warpId,
+            inBattle and "true" or "false",
             frameCount
         )
         
@@ -65,8 +72,8 @@ callbacks:add("frame", function()
         
         -- Debug output to console every 5 seconds
         if frameCount % 300 == 0 then
-            console:log(string.format("Position: (%d, %d), Battle: %s", 
-                posX, posY, inBattle and "yes" or "no"))
+            console:log(string.format("Position: (%d, %d), Map: %d.%d, Battle: %s",
+                posX, posY, mapGroup, mapNum, inBattle and "yes" or "no"))
         end
     end
 end)
