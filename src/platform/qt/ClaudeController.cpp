@@ -309,6 +309,12 @@ void ClaudeController::captureAndSendScreenshot() {
         promptText += stuckWarning + "\n";
     }
     
+    // Add game state if available
+    QString gameState = readGameState();
+    if (!gameState.isEmpty()) {
+        promptText += gameState + "\n";
+    }
+    
     textContent["text"] = promptText;
     content.append(textContent);
     
@@ -736,6 +742,44 @@ QString ClaudeController::checkForStuckPattern() const {
     if (consecutiveCount >= 5) {
         return QString("WARNING: You've pressed '%1' %2 times consecutively. You may be stuck. Try a different approach.")
                .arg(lastDirection.toUpper()).arg(consecutiveCount);
+    }
+    
+    return QString();
+}
+
+QString ClaudeController::readGameState() const {
+    QFile file("scripts/game_state.json");
+    if (!file.open(QIODevice::ReadOnly)) {
+        return QString(); // No game state file
+    }
+    
+    QByteArray data = file.readAll();
+    file.close();
+    
+    if (data.isEmpty()) {
+        return QString();
+    }
+    
+    // Parse the JSON to extract useful information
+    QJsonParseError parseError;
+    QJsonDocument doc = QJsonDocument::fromJson(data, &parseError);
+    
+    if (parseError.error != QJsonParseError::NoError || !doc.isObject()) {
+        return QString(); // Invalid JSON
+    }
+    
+    QJsonObject gameState = doc.object();
+    
+    if (gameState.contains("error")) {
+        return QString(); // Error in game state (game not loaded, etc.)
+    }
+    
+    if (gameState.contains("x") && gameState.contains("y") && gameState.contains("in_battle")) {
+        int x = gameState["x"].toInt();
+        int y = gameState["y"].toInt();
+        bool inBattle = gameState["in_battle"].toBool();
+        
+        return QString("Position: (%1, %2). In battle: %3").arg(x).arg(y).arg(inBattle ? "yes" : "no");
     }
     
     return QString();

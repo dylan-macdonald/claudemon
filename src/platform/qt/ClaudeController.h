@@ -104,6 +104,7 @@ private:
     void clearNote(int noteId);
     void clearAllNotes();
     QString checkForStuckPattern() const;
+    QString readGameState() const;
     void sendInputToGame(const QString& button, int count);
     int getGBAKeyCode(const QString& button);
     void handleCriticalError(const QString& error, const QString& errorCode);
