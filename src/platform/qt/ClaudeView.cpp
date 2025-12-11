@@ -264,15 +264,19 @@ void ClaudeView::onClaudeInputsGenerated(const QList<ClaudeInput>& inputs) {
 
 void ClaudeView::onClaudeNotesChanged() {
     if (!m_claudeController) return;
-    
+
     m_notesList->clear();
-    
+
     QList<ClaudeNote> notes = m_claudeController->getNotes();
     for (const ClaudeNote& note : notes) {
         QString noteText = QString("[%1] #%2: %3").arg(note.timestamp).arg(note.id).arg(note.content);
+        // Add verification status tag if present
+        if (!note.verificationStatus.isEmpty()) {
+            noteText += QString(" [%1]").arg(note.verificationStatus);
+        }
         m_notesList->addItem(noteText);
     }
-    
+
     // Auto-scroll to bottom to show latest notes
     m_notesList->scrollToBottom();
 }

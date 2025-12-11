@@ -336,6 +336,34 @@ void ClaudeController::captureAndSendScreenshot() {
                          "ONLY write progress notes when you SEE EVIDENCE of progress.\n"
                          "Before writing ANY note about progress, ask: \"What in this screenshot PROVES this happened?\"\n"
                          "If you can't answer, don't write the note.\n\n"
+                         "## NOTE TIMING RULE (CRITICAL - READ CAREFULLY)\n\n"
+                         "You see TWO things each turn:\n"
+                         "1. The RESULT of your PREVIOUS action (current screenshot vs previous screenshot)\n"
+                         "2. You DECIDE your NEXT action (what inputs to send this turn)\n\n"
+                         "YOU CAN ONLY WRITE NOTES ABOUT #1 - WHAT YOU CAN SEE RIGHT NOW.\n"
+                         "YOU CANNOT WRITE NOTES ABOUT #2 - YOU HAVEN'T SEEN ITS RESULT YET.\n\n"
+                         "TIMELINE:\n"
+                         "- Turn N-1: You pressed START\n"
+                         "- Turn N: You see result of START (can NOW write notes about whether START worked)\n"
+                         "- Turn N: You press RIGHT (this turn's action)\n"
+                         "- Turn N: You CANNOT write notes about whether RIGHT worked (haven't seen result yet)\n"
+                         "- Turn N+1: You see result of RIGHT (can NOW write notes about whether RIGHT worked)\n\n"
+                         "WRONG (writing about current action you just chose):\n"
+                         "INPUTS: start\n"
+                         "[NOTE: START didn't open the menu]\n"
+                         "^ HOW DO YOU KNOW? You haven't seen the result yet! This is PREDICTION, not VERIFICATION.\n\n"
+                         "RIGHT (writing about previous action you can now see the result of):\n"
+                         "VERIFICATION: Last turn I pressed A. Current screen shows dialogue advanced. SUCCESS.\n"
+                         "INPUTS: start\n"
+                         "[NOTE: Pressing A successfully advanced the dialogue]\n"
+                         "^ This note is about LAST turn's action, which you CAN see the result of.\n\n"
+                         "FORBIDDEN PHRASES IN NOTES (about current action):\n"
+                         "- \"pressed [button] but nothing happened\" (unless talking about PREVIOUS action)\n"
+                         "- \"[button] didn't work\" (unless talking about PREVIOUS action)\n"
+                         "- \"interface unchanged after [button]\" (unless talking about PREVIOUS action)\n"
+                         "- \"tried [button] with no effect\" (unless talking about PREVIOUS action)\n\n"
+                         "Think: PREVIOUS action = you can see its result = you can write notes about it\n"
+                         "       CURRENT action = result is in the future = NO NOTES about its outcome\n\n"
                          "## Inputs\n"
                          "a, b, start, select, up, down, left, right, l, r\n"
                          "Add number for duration: \"up 3\" = hold up\n"
@@ -346,17 +374,23 @@ void ClaudeController::captureAndSendScreenshot() {
                          "[CLEAR ALL NOTES] - clear all\n\n"
                          "Write notes about:\n"
                          "- Current objective\n"
-                         "- What you just tried and whether it ACTUALLY worked (verified)\n"
+                         "- What you PREVIOUSLY tried and whether it ACTUALLY worked (verified from screenshots)\n"
                          "- Things you noticed (NPCs, objects, dialogue hints)\n"
-                         "- Failed attempts so you don't repeat them\n\n"
+                         "- Failed attempts from PREVIOUS turns so you don't repeat them\n"
+                         "- NEVER write notes claiming your CURRENT action succeeded/failed - you'll verify next turn\n\n"
                          "## Response Format (FOLLOW THIS EXACTLY)\n\n"
-                         "VERIFICATION: [If this isn't turn 1: What was my last action? Did it work? What evidence do I see? Did position change? Did screen change?]\n\n"
+                         "LAST ACTION: [what you did last turn - leave blank if turn 1]\n\n"
+                         "VERIFICATION: [Compare previous and current screenshots. Did LAST ACTION work? What evidence?]\n"
+                         "- What changed between screenshots?\n"
+                         "- Position change: [X,Y -> X,Y if available]\n"
+                         "- Conclusion: SUCCESS / FAILED / UNCLEAR\n\n"
+                         "[NOTE: findings about LAST ACTION only - you have evidence now]\n\n"
                          "BELIEF UPDATE: [Correct any wrong notes based on verification. If ground truth contradicts your notes, admit the error.]\n\n"
                          "CURRENT SCREEN: [One sentence - what you see NOW]\n\n"
                          "OBJECTIVE: [What you're trying to do - check your notes]\n\n"
-                         "PLAN: [What you'll try and what SUCCESS would look like]\n\n"
-                         "INPUTS: [your inputs]\n\n"
-                         "[NOTE: only VERIFIED information - things you observed, not predicted]\n\n"
+                         "PLAN: [What you'll try this turn and what SUCCESS would look like - describe expected result but DO NOT claim it happened]\n\n"
+                         "INPUTS: [your inputs for THIS turn]\n\n"
+                         "(DO NOT WRITE NOTES ABOUT YOUR CURRENT INPUTS - you'll verify their result next turn)\n\n"
                          "## Critical Rules\n\n"
                          "1. IF STUCK: Do not repeat the same inputs. You have notes showing what failed. Try something NEW.\n\n"
                          "2. BEFORE MOVING: Ask \"is there something I should interact with first?\" Press A on objects, NPCs, items before trying to leave an area.\n\n"
@@ -446,7 +480,8 @@ void ClaudeController::captureAndSendScreenshot() {
             if (!note.verificationStatus.isEmpty()) {
                 statusTag = QString(" [%1]").arg(note.verificationStatus);
             }
-            promptText += QString("%1. %2%3\n").arg(i + 1).arg(note.content).arg(statusTag);
+            // Use actual note ID, not array index, so [CLEAR NOTE: X] works correctly
+            promptText += QString("%1. %2%3\n").arg(note.id).arg(note.content).arg(statusTag);
         }
         promptText += "\n";
     } else {
@@ -725,15 +760,15 @@ void ClaudeController::handleApiResponse() {
             
             if (foundTextContent) {
                 m_lastResponse = allTextContent;
-                
-                // CRITICAL: Parse notes FIRST before doing anything else
-                parseNotesFromResponse(allTextContent);
-                parseSearchRequestFromResponse(allTextContent);
-                
-                // Then parse inputs
+
+                // Parse inputs FIRST so we can validate notes against them
                 QList<ClaudeInput> inputs;
                 parseInputsFromResponse(allTextContent, inputs);
                 m_lastInputs = inputs;
+
+                // Parse notes WITH validation against current inputs (to detect predictions)
+                parseNotesFromResponse(allTextContent, inputs);
+                parseSearchRequestFromResponse(allTextContent);
 
                 // Create turn record for verification system
                 if (!inputs.isEmpty()) {
@@ -959,32 +994,84 @@ QString ClaudeController::parseInputsFromResponse(const QString& response, QList
     return response;
 }
 
-void ClaudeController::parseNotesFromResponse(const QString& response) {
-    // Look for [NOTE: ...] commands
-    QRegularExpression noteRegex("\\[NOTE:\\s*(.+?)\\]", QRegularExpression::CaseInsensitiveOption);
-    QRegularExpressionMatchIterator noteIt = noteRegex.globalMatch(response);
-    
-    while (noteIt.hasNext()) {
-        QRegularExpressionMatch match = noteIt.next();
-        QString noteContent = match.captured(1).trimmed();
-        if (!noteContent.isEmpty()) {
-            addNote(noteContent);
-        }
-    }
-    
-    // Look for [CLEAR NOTE: X] commands
+void ClaudeController::parseNotesFromResponse(const QString& response, const QList<ClaudeInput>& currentInputs) {
+    // Look for [CLEAR NOTE: X] commands FIRST (before adding new notes)
     QRegularExpression clearNoteRegex("\\[CLEAR\\s+NOTE:\\s*(\\d+)\\]", QRegularExpression::CaseInsensitiveOption);
     QRegularExpressionMatchIterator clearIt = clearNoteRegex.globalMatch(response);
-    
+
     while (clearIt.hasNext()) {
         QRegularExpressionMatch match = clearIt.next();
         int noteId = match.captured(1).toInt();
         clearNote(noteId);
     }
-    
+
     // Look for [CLEAR ALL NOTES] command
     if (response.contains(QRegularExpression("\\[CLEAR\\s+ALL\\s+NOTES\\]", QRegularExpression::CaseInsensitiveOption))) {
         clearAllNotes();
+    }
+
+    // Build list of current action buttons for validation
+    QStringList currentButtons;
+    for (const auto& input : currentInputs) {
+        currentButtons.append(input.button.toLower());
+    }
+
+    // Look for [NOTE: ...] commands
+    QRegularExpression noteRegex("\\[NOTE:\\s*(.+?)\\]", QRegularExpression::CaseInsensitiveOption);
+    QRegularExpressionMatchIterator noteIt = noteRegex.globalMatch(response);
+
+    while (noteIt.hasNext()) {
+        QRegularExpressionMatch match = noteIt.next();
+        QString noteContent = match.captured(1).trimmed();
+        if (noteContent.isEmpty()) {
+            continue;
+        }
+
+        // VALIDATION: Check if note is making predictions about current action
+        QString noteLower = noteContent.toLower();
+        bool isPrediction = false;
+        QString predictedButton;
+
+        // Check if note mentions current action with failure indicators
+        QStringList failureIndicators = {
+            "didn't work", "didn't open", "didn't advance", "didn't change",
+            "nothing happened", "no change", "no effect", "unchanged",
+            "failed", "unsuccessful", "no response", "no result"
+        };
+
+        for (const QString& button : currentButtons) {
+            // Check if note mentions this button
+            if (noteLower.contains(button)) {
+                // Check if it's claiming a result
+                for (const QString& indicator : failureIndicators) {
+                    if (noteLower.contains(indicator)) {
+                        isPrediction = true;
+                        predictedButton = button;
+                        break;
+                    }
+                }
+                // Also check for success claims
+                if (noteLower.contains("opened") || noteLower.contains("worked") ||
+                    noteLower.contains("succeeded") || noteLower.contains("changed")) {
+                    isPrediction = true;
+                    predictedButton = button;
+                }
+                if (isPrediction) break;
+            }
+        }
+
+        if (isPrediction) {
+            // This note is predicting the result of the current action
+            QString warningNote = QString("[PREDICTION - NOT VERIFIED] %1 (Claimed result of '%2' before seeing outcome)")
+                .arg(noteContent)
+                .arg(predictedButton.toUpper());
+            qDebug() << "WARNING: Claude wrote predictive note about current action:" << noteContent;
+            qDebug() << "         This violates NOTE TIMING RULE. Marking as PREDICTION.";
+            addNote(warningNote);
+        } else {
+            // Normal note about verified information
+            addNote(noteContent);
+        }
     }
 }
 
@@ -1001,6 +1088,15 @@ void ClaudeController::addNote(const QString& content) {
     // Keep only last 10 notes (FIFO)
     while (m_claudeNotes.size() > 10) {
         m_claudeNotes.removeFirst();
+    }
+
+    // Renumber notes to keep IDs sequential and manageable
+    // This prevents note IDs from growing to 95, 96, 97 etc.
+    if (m_nextNoteId > 50) { // If IDs are getting large, renumber
+        for (int i = 0; i < m_claudeNotes.size(); ++i) {
+            m_claudeNotes[i].id = i + 1;
+        }
+        m_nextNoteId = m_claudeNotes.size() + 1;
     }
 
     emit notesChanged();
@@ -1021,6 +1117,8 @@ void ClaudeController::clearNote(int noteId) {
 void ClaudeController::clearAllNotes() {
     if (!m_claudeNotes.isEmpty()) {
         m_claudeNotes.clear();
+        // Reset note ID counter so numbers start from 1 again
+        m_nextNoteId = 1;
         emit notesChanged();
         saveSessionToDisk();
     }
@@ -1480,6 +1578,8 @@ void ClaudeController::saveSessionToDisk() {
         noteObj["id"] = note.id;
         noteObj["timestamp"] = note.timestamp;
         noteObj["content"] = note.content;
+        noteObj["verificationStatus"] = note.verificationStatus;
+        // Don't save writtenThisTurn - it resets each turn anyway
         notesArray.append(noteObj);
     }
     root["notes"] = notesArray;
@@ -1549,6 +1649,8 @@ void ClaudeController::loadSessionFromDisk() {
                 note.id = noteObj["id"].toInt();
                 note.timestamp = noteObj["timestamp"].toString();
                 note.content = noteObj["content"].toString();
+                note.verificationStatus = noteObj["verificationStatus"].toString();
+                note.writtenThisTurn = false; // All loaded notes are from previous session
                 m_claudeNotes.append(note);
             }
         }

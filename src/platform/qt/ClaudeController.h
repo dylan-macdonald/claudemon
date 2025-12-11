@@ -123,7 +123,7 @@ private slots:
 private:
     QByteArray captureScreenshotData();
     QString parseInputsFromResponse(const QString& response, QList<ClaudeInput>& inputs);
-    void parseNotesFromResponse(const QString& response);
+    void parseNotesFromResponse(const QString& response, const QList<ClaudeInput>& currentInputs);
     void parseSearchRequestFromResponse(const QString& response);
     void performWebSearch(const QString& query);
     void addNote(const QString& content);
