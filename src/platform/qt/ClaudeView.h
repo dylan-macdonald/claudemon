@@ -41,6 +41,7 @@ private slots:
     void onClaudeCriticalError(const QString& error, const QString& errorCode);
     void onLoopTick();
     void updateStatus();
+    void onClearNotesClicked();
 
 private:
     void setupUI();
@@ -71,6 +72,7 @@ private:
     // Notes section
     QGroupBox* m_notesGroup;
     QListWidget* m_notesList;
+    QPushButton* m_clearNotesButton;
     
     // Status section
     QGroupBox* m_statusGroup;

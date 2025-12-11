@@ -100,7 +100,8 @@ public:
     
     // Notes system
     QList<ClaudeNote> getNotes() const { return m_claudeNotes; }
-    
+    void clearAllNotes();
+
     // Error state
     QString getLastError() const { return m_lastError; }
     int getConsecutiveErrors() const { return m_consecutiveErrors; }
@@ -128,7 +129,6 @@ private:
     void performWebSearch(const QString& query);
     void addNote(const QString& content);
     void clearNote(int noteId);
-    void clearAllNotes();
     void validateNotesAgainstGroundTruth();
     QString checkForStuckPattern() const;
     QString readGameState();

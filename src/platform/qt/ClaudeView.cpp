@@ -102,6 +102,8 @@ void ClaudeView::setupUI() {
     m_notesList = new QListWidget(this);
     m_notesList->setMaximumHeight(150); // Keep it compact
     notesLayout->addWidget(m_notesList);
+    m_clearNotesButton = new QPushButton("Clear All Notes", this);
+    notesLayout->addWidget(m_clearNotesButton);
     rightLayout->addWidget(m_notesGroup);
     
     // Status Section (Right bottom)
@@ -132,7 +134,8 @@ void ClaudeView::setupUI() {
     // Connect signals
     connect(m_startStopButton, &QPushButton::clicked, this, &ClaudeView::onStartStopClicked);
     connect(m_apiKeyEdit, &QLineEdit::textChanged, this, &ClaudeView::onApiKeyChanged);
-    
+    connect(m_clearNotesButton, &QPushButton::clicked, this, &ClaudeView::onClearNotesClicked);
+
     updateButtonStates();
 }
 
@@ -369,5 +372,11 @@ void ClaudeView::updateButtonStates() {
             m_statusLabel->setText("Ready");
             m_statusLabel->setStyleSheet("color: green; font-weight: bold;");
         }
+    }
+}
+
+void ClaudeView::onClearNotesClicked() {
+    if (m_claudeController) {
+        m_claudeController->clearAllNotes();
     }
 }
