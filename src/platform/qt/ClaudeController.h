@@ -201,7 +201,11 @@ private:
     int m_currentKey;
     bool m_currentKeyIsDirectional;
     
+    // Helper method for processing pending inputs (reduces code duplication)
+    void processNextPendingInput();
+
     static const QString CLAUDE_API_URL;
+    static const QString GAME_STATE_PATH;          // Path to Lua game state JSON
     static const int LOOP_INTERVAL_MS = 2000;      // 2 seconds between actions
     static const int REQUEST_TIMEOUT_MS = 30000;   // 30 second timeout
     static const int MAX_CONSECUTIVE_ERRORS = 3;   // Stop after 3 consecutive errors
@@ -210,6 +214,12 @@ private:
     static const int MAX_INPUT_COUNT = 10;         // Cap repeated inputs
     static const int INPUT_PACING_MS = 50;         // 50ms between button presses
     static const int DIRECTION_HOLD_MS = 150;      // ~3 frames for directional input
+    static const int MAX_NOTES = 100;              // Maximum notes Claude can store
+    static const int MAX_CONVERSATION_HISTORY = 10; // Conversation messages to retain
+    static const int MAX_RECENT_INPUTS = 15;       // Recent inputs to track
+    static const int MAX_TURN_HISTORY = 10;        // Turns to show in history
+    static const int MAX_TURN_RECORDS = 10;        // Turn records for verification
+    static const int UI_MAX_INPUT_LIST = 100;      // Max items in UI input list
 };
 
 }

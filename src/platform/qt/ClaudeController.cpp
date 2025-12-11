@@ -34,6 +34,7 @@
 using namespace QGBA;
 
 const QString ClaudeController::CLAUDE_API_URL = "https://api.anthropic.com/v1/messages";
+const QString ClaudeController::GAME_STATE_PATH = "scripts/game_state.json";
 
 ClaudeController::ClaudeController(QObject* parent)
     : QObject(parent)
@@ -74,34 +75,14 @@ ClaudeController::ClaudeController(QObject* parent)
     connect(m_gameLoopTimer, &QTimer::timeout, this, &ClaudeController::captureAndSendScreenshot);
     connect(m_requestTimeoutTimer, &QTimer::timeout, this, &ClaudeController::onRequestTimeout);
     connect(m_inputPacingTimer, &QTimer::timeout, this, [this]() {
-        // Release the currently pressed key, then schedule the next press if any.
+        // Release the currently pressed key, then process next if any
         if (m_coreController && m_currentKey >= 0) {
             m_coreController->clearKey(m_currentKey);
         }
         m_currentKey = -1;
         m_currentKeyIsDirectional = false;
 
-        if (!m_pendingInputs.isEmpty() && m_coreController && m_running) {
-            auto& front = m_pendingInputs.front();
-            m_coreController->addKey(front.keyCode);
-            m_currentKey = front.keyCode;
-            m_currentKeyIsDirectional = front.isDirectional;
-            front.remainingCount--;
-            if (front.remainingCount <= 0) {
-                m_pendingInputs.removeFirst();
-            }
-            
-            // Set timer interval based on input type
-            if (front.isDirectional && front.originalCount > 1) {
-                // Hold directional input for longer
-                m_inputPacingTimer->setInterval(DIRECTION_HOLD_MS * front.originalCount);
-            } else {
-                // Normal pacing for buttons and single directional taps
-                m_inputPacingTimer->setInterval(INPUT_PACING_MS);
-            }
-            
-            m_inputPacingTimer->start();
-        }
+        processNextPendingInput();
     });
 
     loadSessionFromDisk();
@@ -315,94 +296,34 @@ void ClaudeController::captureAndSendScreenshot() {
     QJsonObject textContent;
     textContent["type"] = "text";
     
-    QString promptText = "You are Claude, playing Pokemon Emerald.\n\n"
-                         "## CRITICAL: VERIFY BEFORE BELIEVING\n\n"
-                         "YOU HAVE A PROBLEM: You confuse your INTENTIONS with RESULTS.\n"
-                         "When you say \"I'll press down to leave,\" your brain writes \"I left\" before you see proof.\n"
-                         "This is WRONG. You must VERIFY outcomes before updating your beliefs.\n\n"
-                         "RULES:\n"
-                         "1. ASSUME FAILURE until the screenshot PROVES success\n"
-                         "2. \"I pressed A\" does NOT mean \"interaction happened\" - look for dialogue/menu\n"
-                         "3. \"I pressed down\" does NOT mean \"I moved\" - check if position changed\n"
-                         "4. Your notes may be WRONG if you wrote them based on prediction, not observation\n"
-                         "5. GROUND TRUTH (position, map) overrides your notes if they conflict\n\n"
-                         "WRONG PATTERN:\n"
-                         "- See bedroom -> \"I'll go downstairs\" -> press down -> [NOTE: I'm downstairs now]\n"
-                         "  (But you never verified you actually moved)\n\n"
-                         "RIGHT PATTERN:\n"
-                         "- See bedroom -> \"I'll try going down\" -> press down\n"
-                         "- (Next turn) -> See... still bedroom? -> \"Down didn't work, I'm still in bedroom\"\n"
-                         "- (Next turn) -> See stairs/new room? -> [NOTE: Made it downstairs]\n\n"
-                         "ONLY write progress notes when you SEE EVIDENCE of progress.\n"
-                         "Before writing ANY note about progress, ask: \"What in this screenshot PROVES this happened?\"\n"
-                         "If you can't answer, don't write the note.\n\n"
-                         "## NOTE TIMING RULE (CRITICAL - READ CAREFULLY)\n\n"
-                         "You see TWO things each turn:\n"
-                         "1. The RESULT of your PREVIOUS action (current screenshot vs previous screenshot)\n"
-                         "2. You DECIDE your NEXT action (what inputs to send this turn)\n\n"
-                         "YOU CAN ONLY WRITE NOTES ABOUT #1 - WHAT YOU CAN SEE RIGHT NOW.\n"
-                         "YOU CANNOT WRITE NOTES ABOUT #2 - YOU HAVEN'T SEEN ITS RESULT YET.\n\n"
-                         "TIMELINE:\n"
-                         "- Turn N-1: You pressed START\n"
-                         "- Turn N: You see result of START (can NOW write notes about whether START worked)\n"
-                         "- Turn N: You press RIGHT (this turn's action)\n"
-                         "- Turn N: You CANNOT write notes about whether RIGHT worked (haven't seen result yet)\n"
-                         "- Turn N+1: You see result of RIGHT (can NOW write notes about whether RIGHT worked)\n\n"
-                         "WRONG (writing about current action you just chose):\n"
-                         "INPUTS: start\n"
-                         "[NOTE: START didn't open the menu]\n"
-                         "^ HOW DO YOU KNOW? You haven't seen the result yet! This is PREDICTION, not VERIFICATION.\n\n"
-                         "RIGHT (writing about previous action you can now see the result of):\n"
-                         "VERIFICATION: Last turn I pressed A. Current screen shows dialogue advanced. SUCCESS.\n"
-                         "INPUTS: start\n"
-                         "[NOTE: Pressing A successfully advanced the dialogue]\n"
-                         "^ This note is about LAST turn's action, which you CAN see the result of.\n\n"
-                         "FORBIDDEN PHRASES IN NOTES (about current action):\n"
-                         "- \"pressed [button] but nothing happened\" (unless talking about PREVIOUS action)\n"
-                         "- \"[button] didn't work\" (unless talking about PREVIOUS action)\n"
-                         "- \"interface unchanged after [button]\" (unless talking about PREVIOUS action)\n"
-                         "- \"tried [button] with no effect\" (unless talking about PREVIOUS action)\n\n"
-                         "Think: PREVIOUS action = you can see its result = you can write notes about it\n"
-                         "       CURRENT action = result is in the future = NO NOTES about its outcome\n\n"
-                         "## Inputs\n"
-                         "a, b, start, select, up, down, left, right, l, r\n"
-                         "Add number for duration: \"up 3\" = hold up\n"
-                         "Chain inputs: \"a a a\" or \"up 2 right a\"\n\n"
-                         "## Notes (YOUR MEMORY - USE CONSTANTLY)\n"
-                         "[NOTE: message] - save a note\n"
-                         "[CLEAR NOTE: 3] - delete note 3\n"
-                         "[CLEAR ALL NOTES] - clear all\n\n"
-                         "Write notes about:\n"
-                         "- Current objective\n"
-                         "- What you PREVIOUSLY tried and whether it ACTUALLY worked (verified from screenshots)\n"
-                         "- Things you noticed (NPCs, objects, dialogue hints)\n"
-                         "- Failed attempts from PREVIOUS turns so you don't repeat them\n"
-                         "- NEVER write notes claiming your CURRENT action succeeded/failed - you'll verify next turn\n\n"
-                         "## Response Format (FOLLOW THIS EXACTLY)\n\n"
-                         "LAST ACTION: [what you did last turn - leave blank if turn 1]\n\n"
-                         "VERIFICATION: [Compare previous and current screenshots. Did LAST ACTION work? What evidence?]\n"
-                         "- What changed between screenshots?\n"
-                         "- Position change: [X,Y -> X,Y if available]\n"
-                         "- Conclusion: SUCCESS / FAILED / UNCLEAR\n\n"
-                         "[NOTE: findings about LAST ACTION only - you have evidence now]\n\n"
-                         "BELIEF UPDATE: [Correct any wrong notes based on verification. If ground truth contradicts your notes, admit the error.]\n\n"
-                         "CURRENT SCREEN: [One sentence - what you see NOW]\n\n"
-                         "OBJECTIVE: [What you're trying to do - check your notes]\n\n"
-                         "PLAN: [What you'll try this turn and what SUCCESS would look like - describe expected result but DO NOT claim it happened]\n\n"
-                         "INPUTS: [your inputs for THIS turn]\n\n"
-                         "(DO NOT WRITE NOTES ABOUT YOUR CURRENT INPUTS - you'll verify their result next turn)\n\n"
-                         "## Critical Rules\n\n"
-                         "1. IF STUCK: Do not repeat the same inputs. You have notes showing what failed. Try something NEW.\n\n"
-                         "2. BEFORE MOVING: Ask \"is there something I should interact with first?\" Press A on objects, NPCs, items before trying to leave an area.\n\n"
-                         "3. READ DIALOGUE: NPCs tell you what to do. Note important hints.\n\n"
-                         "4. CHECK YOUR NOTES: Every turn, read your notes. They tell you what you already tried.\n\n"
-                         "5. POKEMON EMERALD START:\n"
-                         "   - After the truck, you're in your bedroom\n"
-                         "   - You MUST set the wall clock before leaving (interact with it)\n"
-                         "   - Then go downstairs, mom talks about TV\n"
-                         "   - Then you can leave the house\n"
-                         "   - DO NOT spam down to leave before setting clock - it won't work\n\n"
-                         "6. ONE THING AT A TIME: Don't try to do everything. Set one objective, achieve it, then set the next.\n\n";
+    QString promptText = "You are Claude, playing Pokemon Emerald. Goal: Become the Pokemon Champion!\n\n"
+                         "## CORE RULE: VERIFY, DON'T PREDICT\n"
+                         "You tend to confuse INTENTIONS with RESULTS. Never claim an action worked until you SEE proof in the next screenshot.\n"
+                         "- WRONG: Press down -> [NOTE: I'm downstairs now] (you haven't verified!)\n"
+                         "- RIGHT: Press down -> (next turn) see new room -> [NOTE: Made it downstairs]\n\n"
+                         "## NOTE TIMING\n"
+                         "Each turn you see the RESULT of your PREVIOUS action and CHOOSE your NEXT action.\n"
+                         "- Write notes about PREVIOUS action results (you have evidence)\n"
+                         "- NEVER write notes about CURRENT action outcomes (result is in the future)\n\n"
+                         "## INPUTS\n"
+                         "Buttons: a, b, start, select, up, down, left, right, l, r\n"
+                         "Hold: \"up 3\" | Chain: \"up 2 right a\"\n\n"
+                         "## NOTES (You can store up to 100 notes - use them!)\n"
+                         "[NOTE: message] - save | [CLEAR NOTE: 3] - delete #3 | [CLEAR ALL NOTES]\n"
+                         "Use for: objectives, verified progress, things you noticed, failed attempts\n\n"
+                         "## RESPONSE FORMAT\n"
+                         "VERIFICATION: [Did LAST action work? Evidence from screenshots. SUCCESS/FAILED/UNCLEAR]\n"
+                         "[NOTE: findings about last action if relevant]\n"
+                         "SCREEN: [What you see now]\n"
+                         "OBJECTIVE: [Current goal]\n"
+                         "PLAN: [What to try and expected result - don't claim it happened]\n"
+                         "INPUTS: [your inputs]\n\n"
+                         "## KEY RULES\n"
+                         "1. IF STUCK: Don't repeat failed inputs. Try something NEW.\n"
+                         "2. BEFORE LEAVING: Interact with objects/NPCs first (press A).\n"
+                         "3. READ DIALOGUE: NPCs give hints. Note them.\n"
+                         "4. GROUND TRUTH: Position/map data overrides your notes if they conflict.\n"
+                         "5. POKEMON EMERALD START: Bedroom -> set wall clock -> downstairs -> mom talks -> can leave.\n\n";
     
     // Add input history by turns - CRITICAL for preventing loops
     if (!m_turnHistory.isEmpty()) {
@@ -516,15 +437,9 @@ void ClaudeController::captureAndSendScreenshot() {
     
     // Final instruction
     if (!m_previousScreenshot.isEmpty()) {
-        promptText += "\n## TWO-SCREENSHOT COMPARISON\n";
-        promptText += "You will see TWO screenshots:\n";
-        promptText += "1. PREVIOUS screenshot (before your last action)\n";
-        promptText += "2. CURRENT screenshot (after your last action)\n\n";
-        promptText += "Compare them carefully:\n";
-        promptText += "- If position unchanged: your movement FAILED\n";
-        promptText += "- If no new dialogue/menu: your interaction FAILED\n";
-        promptText += "- If screen identical: NOTHING HAPPENED\n\n";
-        promptText += "Do not claim progress unless you can point to a specific change.\n\n";
+        promptText += "## SCREENSHOTS\n";
+        promptText += "Two images follow: PREVIOUS (before action) and CURRENT (after action).\n";
+        promptText += "Compare them - if identical, your action FAILED.\n\n";
     }
     promptText += "What do you do?";
 
@@ -566,7 +481,7 @@ void ClaudeController::captureAndSendScreenshot() {
     userContent.append(userText);
     userHist["content"] = userContent;
     m_conversationMessages.append(userHist);
-    while (m_conversationMessages.size() > 10) {
+    while (m_conversationMessages.size() > MAX_CONVERSATION_HISTORY) {
         m_conversationMessages.removeFirst();
     }
     requestBody["messages"] = messages;
@@ -830,9 +745,9 @@ void ClaudeController::handleApiResponse() {
                         record.resultReason = "Non-movement action - cannot auto-verify";
                     }
 
-                    // Add to turn records (keep last 10)
+                    // Add to turn records
                     m_turnRecords.append(record);
-                    while (m_turnRecords.size() > 10) {
+                    while (m_turnRecords.size() > MAX_TURN_RECORDS) {
                         m_turnRecords.removeFirst();
                     }
 
@@ -855,8 +770,8 @@ void ClaudeController::handleApiResponse() {
                 assistantMsg["content"] = assistantContent;
                 m_conversationMessages.append(assistantMsg);
 
-                // Trim history to last 10 messages (assistant+user)
-                while (m_conversationMessages.size() > 10) {
+                // Trim history
+                while (m_conversationMessages.size() > MAX_CONVERSATION_HISTORY) {
                     m_conversationMessages.removeFirst();
                 }
                 saveSessionToDisk();
@@ -1085,14 +1000,14 @@ void ClaudeController::addNote(const QString& content) {
 
     m_claudeNotes.append(note);
 
-    // Keep only last 10 notes (FIFO)
-    while (m_claudeNotes.size() > 10) {
+    // Keep only last MAX_NOTES notes (FIFO)
+    while (m_claudeNotes.size() > MAX_NOTES) {
         m_claudeNotes.removeFirst();
     }
 
     // Renumber notes to keep IDs sequential and manageable
-    // This prevents note IDs from growing to 95, 96, 97 etc.
-    if (m_nextNoteId > 50) { // If IDs are getting large, renumber
+    // This prevents note IDs from growing excessively large
+    if (m_nextNoteId > MAX_NOTES * 2) { // If IDs are getting large, renumber
         for (int i = 0; i < m_claudeNotes.size(); ++i) {
             m_claudeNotes[i].id = i + 1;
         }
@@ -1224,7 +1139,7 @@ QString ClaudeController::checkForStuckPattern() const {
 }
 
 QString ClaudeController::readGameState() {
-    QFile file("scripts/game_state.json");
+    QFile file(GAME_STATE_PATH);
     if (!file.open(QIODevice::ReadOnly)) {
         return QString(); // No game state file
     }
@@ -1446,41 +1361,20 @@ void ClaudeController::processInputs(const QList<ClaudeInput>& inputs) {
         turn.inputs = turnInputs;
         m_turnHistory.append(turn);
         
-        // Keep only last 10 turns
-        while (m_turnHistory.size() > 10) {
+        // Keep only recent turns
+        while (m_turnHistory.size() > MAX_TURN_HISTORY) {
             m_turnHistory.removeFirst();
         }
     }
-    
-    // Keep only last 15 individual inputs
-    while (m_recentInputs.size() > 15) {
+
+    // Keep only recent individual inputs
+    while (m_recentInputs.size() > MAX_RECENT_INPUTS) {
         m_recentInputs.removeFirst();
     }
     
     // Start processing the queue
-    if (!m_pendingInputs.isEmpty() && !m_inputPacingTimer->isActive()) {
-        // Send first input immediately
-        auto& front = m_pendingInputs.front();
-        if (m_coreController && m_running) {
-            m_coreController->addKey(front.keyCode);
-            m_currentKey = front.keyCode;
-            m_currentKeyIsDirectional = front.isDirectional;
-            front.remainingCount--;
-            if (front.remainingCount <= 0) {
-                m_pendingInputs.removeFirst();
-            }
-            
-            // Set timer interval based on input type
-            if (front.isDirectional && front.originalCount > 1) {
-                // Hold directional input for longer
-                m_inputPacingTimer->setInterval(DIRECTION_HOLD_MS * front.originalCount);
-            } else {
-                // Normal pacing for buttons and single directional taps
-                m_inputPacingTimer->setInterval(INPUT_PACING_MS);
-            }
-            
-            m_inputPacingTimer->start();
-        }
+    if (!m_inputPacingTimer->isActive()) {
+        processNextPendingInput();
     }
 }
 
@@ -1511,32 +1405,9 @@ void ClaudeController::sendInputToGame(const QString& button, int count) {
     }
     
     m_pendingInputs.append(pendingInput);
-    
+
     if (!m_inputPacingTimer->isActive()) {
-        auto& front = m_pendingInputs.front();
-        if (m_coreController && m_running) {
-            m_coreController->addKey(front.keyCode);
-            m_currentKey = front.keyCode;
-            m_currentKeyIsDirectional = front.isDirectional;
-            front.remainingCount--;
-            if (front.remainingCount <= 0) {
-                m_pendingInputs.removeFirst();
-            }
-            
-            // Set timer interval based on input type
-            if (front.isDirectional && front.originalCount > 1) {
-                m_inputPacingTimer->setInterval(DIRECTION_HOLD_MS * front.originalCount);
-            } else {
-                m_inputPacingTimer->setInterval(INPUT_PACING_MS);
-            }
-            
-            if (!m_pendingInputs.isEmpty()) {
-                m_inputPacingTimer->start();
-            } else {
-                // Still release the pressed key after the pacing interval
-                m_inputPacingTimer->start();
-            }
-        }
+        processNextPendingInput();
     }
 }
 
@@ -1560,6 +1431,35 @@ int ClaudeController::getGBAKeyCode(const QString& button) {
 bool ClaudeController::isDirectionalButton(const QString& button) const {
     QString lower = button.toLower();
     return (lower == "up" || lower == "down" || lower == "left" || lower == "right");
+}
+
+void ClaudeController::processNextPendingInput() {
+    if (m_pendingInputs.isEmpty() || !m_coreController || !m_running) {
+        return;
+    }
+
+    auto& front = m_pendingInputs.front();
+    m_coreController->addKey(front.keyCode);
+    m_currentKey = front.keyCode;
+    m_currentKeyIsDirectional = front.isDirectional;
+
+    // Save values before potentially removing from list
+    bool isDirectional = front.isDirectional;
+    int originalCount = front.originalCount;
+
+    front.remainingCount--;
+    if (front.remainingCount <= 0) {
+        m_pendingInputs.removeFirst();
+    }
+
+    // Set timer interval based on input type (use saved values)
+    if (isDirectional && originalCount > 1) {
+        m_inputPacingTimer->setInterval(DIRECTION_HOLD_MS * originalCount);
+    } else {
+        m_inputPacingTimer->setInterval(INPUT_PACING_MS);
+    }
+
+    m_inputPacingTimer->start();
 }
 
 void ClaudeController::saveSessionToDisk() {
@@ -1632,7 +1532,7 @@ void ClaudeController::loadSessionFromDisk() {
     m_webSearchEnabled = root["webSearch"].toBool(false);
     if (root.contains("history") && root["history"].isArray()) {
         m_conversationMessages = root["history"].toArray();
-        while (m_conversationMessages.size() > 10) {
+        while (m_conversationMessages.size() > MAX_CONVERSATION_HISTORY) {
             m_conversationMessages.removeFirst();
         }
     }
