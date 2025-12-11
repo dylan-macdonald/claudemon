@@ -216,14 +216,13 @@ QByteArray ClaudeController::captureScreenshotData() {
     // Convert to RGB888 first (remove alpha channel, ensure consistent format)
     QImage rgb888 = image.convertToFormat(QImage::Format_RGB888);
 
-    // Upscale to 1280x720 for better vision model clarity
-    // GBA native: 240x160 (3:2 aspect ratio)
-    // Target: 1280x720 (16:9 aspect ratio)
-    // Strategy: Scale to 1080x720 (maintains 3:2 ratio), then letterbox to 1280x720
+    // Upscale 4x for better vision model clarity
+    // GBA native: 240x160
+    // Target: 960x640 (4x upscale, maintains 3:2 aspect ratio)
+    // Use nearest neighbor to preserve pixel art edges
 
-    // Scale to 1080x720 using nearest neighbor (preserves pixel art edges)
     QImage scaled = rgb888.scaled(
-        1080, 720,
+        960, 640,
         Qt::IgnoreAspectRatio,  // We're already calculating the correct size
         Qt::FastTransformation  // Nearest neighbor - CRITICAL for pixel art
     );
@@ -233,35 +232,18 @@ QByteArray ClaudeController::captureScreenshotData() {
         scaled = scaled.convertToFormat(QImage::Format_RGB888);
     }
 
-    // Create 1280x720 canvas with black letterbox bars
-    QImage final(1280, 720, QImage::Format_RGB888);
-    final.fill(Qt::black);
-
-    // Center the scaled image (100px bars on left and right)
-    int offsetX = (1280 - 1080) / 2;  // 100px
-    int offsetY = 0;
-
-    // Copy scaled image to center of canvas
-    for (int y = 0; y < scaled.height(); ++y) {
-        memcpy(
-            final.scanLine(y + offsetY) + (offsetX * 3),  // 3 bytes per pixel (RGB888)
-            scaled.scanLine(y),
-            scaled.width() * 3
-        );
-    }
-
     QByteArray imageData;
     QBuffer buffer(&imageData);
     buffer.open(QIODevice::WriteOnly);
 
     // Save as PNG
-    if (!final.save(&buffer, "PNG")) {
+    if (!scaled.save(&buffer, "PNG")) {
         qDebug() << "captureScreenshotData: failed to save PNG";
         return QByteArray();
     }
 
     qDebug() << "Captured screenshot: Original" << image.width() << "x" << image.height()
-             << "-> Upscaled" << final.width() << "x" << final.height()
+             << "-> Upscaled" << scaled.width() << "x" << scaled.height()
              << "pixels, size:" << imageData.size() << "bytes";
     return imageData;
 }
@@ -334,11 +316,10 @@ void ClaudeController::captureAndSendScreenshot() {
     QString promptText = "You are Claude, playing Pokemon Emerald. Goal: Become the Pokemon Champion!\n\n"
                          "## VISUAL CONTEXT\n"
                          "You are viewing PIXEL ART screenshots from a Game Boy Advance game.\n"
-                         "- Original resolution: 240x160 pixels (upscaled to 1080x720 for clarity, letterboxed to 1280x720)\n"
+                         "- Original resolution: 240x160 pixels (upscaled 4x to 960x640 for clarity)\n"
                          "- Text appears in pixel font in a dialogue box at the bottom of the screen\n"
                          "- Characters and objects are small sprites (16x16 to 32x32 pixels typically)\n"
-                         "- Colors are limited (GBA palette)\n"
-                         "- Black bars on left and right are letterboxing (not part of the game)\n\n"
+                         "- Colors are limited (GBA palette)\n\n"
                          "IMPORTANT:\n"
                          "- READ THE ACTUAL PIXELS. Don't assume or fill in details you can't see clearly.\n"
                          "- If you can't read text clearly, say so rather than guessing.\n"
