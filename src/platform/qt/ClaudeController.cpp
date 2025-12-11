@@ -204,29 +204,64 @@ QByteArray ClaudeController::captureScreenshotData() {
         qDebug() << "captureScreenshotData: no core controller";
         return QByteArray();
     }
-    
+
     // Use CoreController's getPixels() which properly handles the framebuffer
     QImage image = m_coreController->getPixels();
-    
+
     if (image.isNull() || image.width() == 0 || image.height() == 0) {
         qDebug() << "captureScreenshotData: got null or empty image";
         return QByteArray();
     }
-    
+
+    // Convert to RGB888 first (remove alpha channel, ensure consistent format)
+    QImage rgb888 = image.convertToFormat(QImage::Format_RGB888);
+
+    // Upscale to 1280x720 for better vision model clarity
+    // GBA native: 240x160 (3:2 aspect ratio)
+    // Target: 1280x720 (16:9 aspect ratio)
+    // Strategy: Scale to 1080x720 (maintains 3:2 ratio), then letterbox to 1280x720
+
+    // Scale to 1080x720 using nearest neighbor (preserves pixel art edges)
+    QImage scaled = rgb888.scaled(
+        1080, 720,
+        Qt::IgnoreAspectRatio,  // We're already calculating the correct size
+        Qt::FastTransformation  // Nearest neighbor - CRITICAL for pixel art
+    );
+
+    // Ensure scaled image is RGB888 (scaled() should preserve format, but verify)
+    if (scaled.format() != QImage::Format_RGB888) {
+        scaled = scaled.convertToFormat(QImage::Format_RGB888);
+    }
+
+    // Create 1280x720 canvas with black letterbox bars
+    QImage final(1280, 720, QImage::Format_RGB888);
+    final.fill(Qt::black);
+
+    // Center the scaled image (100px bars on left and right)
+    int offsetX = (1280 - 1080) / 2;  // 100px
+    int offsetY = 0;
+
+    // Copy scaled image to center of canvas
+    for (int y = 0; y < scaled.height(); ++y) {
+        memcpy(
+            final.scanLine(y + offsetY) + (offsetX * 3),  // 3 bytes per pixel (RGB888)
+            scaled.scanLine(y),
+            scaled.width() * 3
+        );
+    }
+
     QByteArray imageData;
     QBuffer buffer(&imageData);
     buffer.open(QIODevice::WriteOnly);
-    
-    // Convert to RGB888 for Claude API (remove alpha channel, ensure consistent format)
-    QImage rgb888 = image.convertToFormat(QImage::Format_RGB888);
-    
+
     // Save as PNG
-    if (!rgb888.save(&buffer, "PNG")) {
+    if (!final.save(&buffer, "PNG")) {
         qDebug() << "captureScreenshotData: failed to save PNG";
         return QByteArray();
     }
-    
-    qDebug() << "Captured screenshot:" << image.width() << "x" << image.height() 
+
+    qDebug() << "Captured screenshot: Original" << image.width() << "x" << image.height()
+             << "-> Upscaled" << final.width() << "x" << final.height()
              << "pixels, size:" << imageData.size() << "bytes";
     return imageData;
 }
@@ -297,6 +332,29 @@ void ClaudeController::captureAndSendScreenshot() {
     textContent["type"] = "text";
     
     QString promptText = "You are Claude, playing Pokemon Emerald. Goal: Become the Pokemon Champion!\n\n"
+                         "## VISUAL CONTEXT\n"
+                         "You are viewing PIXEL ART screenshots from a Game Boy Advance game.\n"
+                         "- Original resolution: 240x160 pixels (upscaled to 1080x720 for clarity, letterboxed to 1280x720)\n"
+                         "- Text appears in pixel font in a dialogue box at the bottom of the screen\n"
+                         "- Characters and objects are small sprites (16x16 to 32x32 pixels typically)\n"
+                         "- Colors are limited (GBA palette)\n"
+                         "- Black bars on left and right are letterboxing (not part of the game)\n\n"
+                         "IMPORTANT:\n"
+                         "- READ THE ACTUAL PIXELS. Don't assume or fill in details you can't see clearly.\n"
+                         "- If you can't read text clearly, say so rather than guessing.\n"
+                         "- Sprite details are minimal - a few pixels difference distinguishes characters.\n"
+                         "- The dialogue box at the bottom contains the most important text to read.\n\n"
+                         "## READING THE SCREEN\n"
+                         "When describing what you see:\n"
+                         "1. DIALOGUE BOX (bottom): Read the exact text. If unclear, say \"text unclear\" rather than guessing.\n"
+                         "2. SPEAKER: Who is talking? Look for name labels or context.\n"
+                         "3. SCENE: Where are you? Indoor/outdoor, what room, what's visible.\n"
+                         "4. SPRITES: What characters/objects are on screen? Describe positions.\n"
+                         "5. UI ELEMENTS: Any menus, health bars, indicators?\n\n"
+                         "If the screen is a menu:\n"
+                         "- What options are listed?\n"
+                         "- Which option is highlighted/selected (usually indicated by arrow or color)?\n"
+                         "- What buttons are shown at the bottom?\n\n"
                          "## CORE RULE: VERIFY, DON'T PREDICT\n"
                          "You tend to confuse INTENTIONS with RESULTS. Never claim an action worked until you SEE proof in the next screenshot.\n"
                          "- WRONG: Press down -> [NOTE: I'm downstairs now] (you haven't verified!)\n"
@@ -308,16 +366,40 @@ void ClaudeController::captureAndSendScreenshot() {
                          "## INPUTS\n"
                          "Buttons: a, b, start, select, up, down, left, right, l, r\n"
                          "Hold: \"up 3\" | Chain: \"up 2 right a\"\n\n"
-                         "## NOTES (You can store up to 100 notes - use them!)\n"
-                         "[NOTE: message] - save | [CLEAR NOTE: 3] - delete #3 | [CLEAR ALL NOTES]\n"
-                         "Use for: objectives, verified progress, things you noticed, failed attempts\n\n"
+                         "## NOTES (Use Sparingly)\n"
+                         "Notes persist between turns. They're for IMPORTANT things you need to remember, not a turn-by-turn diary.\n\n"
+                         "Commands:\n"
+                         "[NOTE: message] - save a note\n"
+                         "[CLEAR NOTE: 3] - delete note #3\n"
+                         "[CLEAR ALL NOTES] - clear all\n\n"
+                         "WHEN TO WRITE A NOTE:\n"
+                         "- You discovered something important (item location, NPC hint, puzzle solution)\n"
+                         "- You need to remember an objective across multiple turns\n"
+                         "- You tried something that failed and must not repeat it\n"
+                         "- Information you'd forget but need later\n\n"
+                         "WHEN NOT TO WRITE A NOTE:\n"
+                         "- Routine actions (pressed A, dialogue advanced)\n"
+                         "- Turn-by-turn narration\n"
+                         "- Things visible in the current screenshot\n"
+                         "- Things already in your notes\n\n"
+                         "BAD (note every turn):\n"
+                         "[NOTE: Pressed A and dialogue advanced]\n"
+                         "[NOTE: Professor Birch is talking]\n"
+                         "[NOTE: Now he's asking my name]\n\n"
+                         "GOOD (note only when needed):\n"
+                         "[NOTE: OBJECTIVE - Name character and complete intro]\n"
+                         "(many turns pass with no notes)\n"
+                         "[NOTE: Rival's name is MAY - might be important later]\n\n"
+                         "If you don't have anything important to remember, DON'T WRITE A NOTE.\n"
+                         "Most turns should have zero notes.\n\n"
                          "## RESPONSE FORMAT\n"
-                         "VERIFICATION: [Did LAST action work? Evidence from screenshots. SUCCESS/FAILED/UNCLEAR]\n"
-                         "[NOTE: findings about last action if relevant]\n"
-                         "SCREEN: [What you see now]\n"
-                         "OBJECTIVE: [Current goal]\n"
-                         "PLAN: [What to try and expected result - don't claim it happened]\n"
+                         "LAST ACTION: [what you did last turn]\n\n"
+                         "VERIFICATION: [Did it work? What evidence?]\n\n"
+                         "CURRENT SCREEN: [what you see]\n\n"
+                         "OBJECTIVE: [current goal]\n\n"
+                         "PLAN: [what you'll try]\n\n"
                          "INPUTS: [your inputs]\n\n"
+                         "(OPTIONAL - only if important) [NOTE: critical information to remember]\n\n"
                          "## KEY RULES\n"
                          "1. IF STUCK: Don't repeat failed inputs. Try something NEW.\n"
                          "2. BEFORE LEAVING: Interact with objects/NPCs first (press A).\n"
@@ -393,6 +475,8 @@ void ClaudeController::captureAndSendScreenshot() {
     }
 
     // Add notes - CRITICAL for Claude's memory (with verification status)
+    qDebug() << "=== NOTES IN PROMPT ===";
+    qDebug() << "Current notes count:" << m_claudeNotes.size();
     if (!m_claudeNotes.isEmpty()) {
         promptText += "## Your Current Notes:\n";
         for (int i = 0; i < m_claudeNotes.size(); ++i) {
@@ -402,13 +486,18 @@ void ClaudeController::captureAndSendScreenshot() {
                 statusTag = QString(" [%1]").arg(note.verificationStatus);
             }
             // Use actual note ID, not array index, so [CLEAR NOTE: X] works correctly
-            promptText += QString("%1. %2%3\n").arg(note.id).arg(note.content).arg(statusTag);
+            QString noteText = QString("%1. %2%3\n").arg(note.id).arg(note.content).arg(statusTag);
+            promptText += noteText;
+            qDebug() << "  Note" << note.id << ":" << note.content;
         }
         promptText += "\n";
     } else {
         promptText += "## Your Current Notes:\n";
         promptText += "You have no notes. Use [NOTE: ...] to remember things.\n\n";
+        qDebug() << "  (no notes)";
     }
+    qDebug() << "======================";
+
     
     // Check for stuck detection
     QString stuckWarning = checkForStuckPattern();
@@ -1000,43 +1089,68 @@ void ClaudeController::addNote(const QString& content) {
 
     m_claudeNotes.append(note);
 
+    qDebug() << "=== NOTE ADDED ===";
+    qDebug() << "Note ID:" << note.id;
+    qDebug() << "Content:" << content;
+    qDebug() << "Total notes:" << m_claudeNotes.size();
+
     // Keep only last MAX_NOTES notes (FIFO)
     while (m_claudeNotes.size() > MAX_NOTES) {
         m_claudeNotes.removeFirst();
+        qDebug() << "Removed oldest note (exceeded MAX_NOTES)";
     }
 
     // Renumber notes to keep IDs sequential and manageable
     // This prevents note IDs from growing excessively large
     if (m_nextNoteId > MAX_NOTES * 2) { // If IDs are getting large, renumber
+        qDebug() << "Renumbering notes (IDs growing large)";
         for (int i = 0; i < m_claudeNotes.size(); ++i) {
             m_claudeNotes[i].id = i + 1;
         }
         m_nextNoteId = m_claudeNotes.size() + 1;
     }
+    qDebug() << "==================";
 
     emit notesChanged();
     saveSessionToDisk(); // Persist notes
 }
 
 void ClaudeController::clearNote(int noteId) {
+    qDebug() << "=== CLEAR NOTE ===";
+    qDebug() << "Attempting to clear note ID:" << noteId;
+    bool found = false;
     for (int i = 0; i < m_claudeNotes.size(); ++i) {
         if (m_claudeNotes[i].id == noteId) {
+            qDebug() << "Found and removing note:" << m_claudeNotes[i].content;
             m_claudeNotes.removeAt(i);
+            qDebug() << "Remaining notes:" << m_claudeNotes.size();
             emit notesChanged();
             saveSessionToDisk();
+            found = true;
             break;
         }
     }
+    if (!found) {
+        qDebug() << "Note ID" << noteId << "not found";
+    }
+    qDebug() << "==================";
 }
 
 void ClaudeController::clearAllNotes() {
+    qDebug() << "=== CLEAR ALL NOTES ===";
     if (!m_claudeNotes.isEmpty()) {
+        int count = m_claudeNotes.size();
+        qDebug() << "Clearing" << count << "notes";
         m_claudeNotes.clear();
         // Reset note ID counter so numbers start from 1 again
         m_nextNoteId = 1;
         emit notesChanged();
         saveSessionToDisk();
+        qDebug() << "All notes cleared successfully";
+    } else {
+        qDebug() << "No notes to clear";
     }
+    qDebug() << "=======================";
 }
 
 void ClaudeController::validateNotesAgainstGroundTruth() {
@@ -1470,7 +1584,7 @@ void ClaudeController::saveSessionToDisk() {
     root["webSearch"] = m_webSearchEnabled;
     root["history"] = m_conversationMessages;
     root["nextNoteId"] = m_nextNoteId;
-    
+
     // Save notes
     QJsonArray notesArray;
     for (const ClaudeNote& note : m_claudeNotes) {
@@ -1484,6 +1598,9 @@ void ClaudeController::saveSessionToDisk() {
     }
     root["notes"] = notesArray;
 
+    qDebug() << "=== SAVING SESSION ===";
+    qDebug() << "Saving" << m_claudeNotes.size() << "notes to disk";
+
     QJsonDocument doc(root);
     QString basePath = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
     if (basePath.isEmpty()) {
@@ -1493,11 +1610,17 @@ void ClaudeController::saveSessionToDisk() {
         basePath = QStandardPaths::writableLocation(QStandardPaths::HomeLocation);
     }
     QDir().mkpath(basePath);
-    QFile f(basePath + "/claude_session.json");
+    QString sessionPath = basePath + "/claude_session.json";
+    QFile f(sessionPath);
     if (f.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
-        f.write(doc.toJson());
+        qint64 bytesWritten = f.write(doc.toJson());
         f.close();
+        qDebug() << "Session saved to:" << sessionPath;
+        qDebug() << "Bytes written:" << bytesWritten;
+    } else {
+        qDebug() << "ERROR: Failed to open session file for writing:" << sessionPath;
     }
+    qDebug() << "======================";
 }
 
 void ClaudeController::loadSessionFromDisk() {
@@ -1508,17 +1631,36 @@ void ClaudeController::loadSessionFromDisk() {
     if (basePath.isEmpty()) {
         basePath = QStandardPaths::writableLocation(QStandardPaths::HomeLocation);
     }
-    QFile f(basePath + "/claude_session.json");
-    if (!f.exists() || !f.open(QIODevice::ReadOnly)) {
+    QString sessionPath = basePath + "/claude_session.json";
+    QFile f(sessionPath);
+
+    qDebug() << "=== LOADING SESSION ===";
+    qDebug() << "Session path:" << sessionPath;
+
+    if (!f.exists()) {
+        qDebug() << "Session file does not exist (first run?)";
+        qDebug() << "=======================";
         return;
     }
+
+    if (!f.open(QIODevice::ReadOnly)) {
+        qDebug() << "ERROR: Failed to open session file for reading";
+        qDebug() << "=======================";
+        return;
+    }
+
     QByteArray data = f.readAll();
     f.close();
+    qDebug() << "Read" << data.size() << "bytes from session file";
+
     QJsonParseError err;
     QJsonDocument doc = QJsonDocument::fromJson(data, &err);
     if (err.error != QJsonParseError::NoError || !doc.isObject()) {
+        qDebug() << "ERROR: Failed to parse session JSON:" << err.errorString();
+        qDebug() << "=======================";
         return;
     }
+
     QJsonObject root = doc.object();
     QString modelStr = root["model"].toString();
     // Handle both old and new model name formats
@@ -1536,12 +1678,13 @@ void ClaudeController::loadSessionFromDisk() {
             m_conversationMessages.removeFirst();
         }
     }
-    
+
     // Load notes
     m_nextNoteId = root["nextNoteId"].toInt(1);
     if (root.contains("notes") && root["notes"].isArray()) {
         m_claudeNotes.clear();
         QJsonArray notesArray = root["notes"].toArray();
+        qDebug() << "Loading" << notesArray.size() << "notes from session";
         for (const QJsonValue& noteVal : notesArray) {
             if (noteVal.isObject()) {
                 QJsonObject noteObj = noteVal.toObject();
@@ -1552,7 +1695,12 @@ void ClaudeController::loadSessionFromDisk() {
                 note.verificationStatus = noteObj["verificationStatus"].toString();
                 note.writtenThisTurn = false; // All loaded notes are from previous session
                 m_claudeNotes.append(note);
+                qDebug() << "  Loaded note" << note.id << ":" << note.content;
             }
         }
+        qDebug() << "Total notes loaded:" << m_claudeNotes.size();
+    } else {
+        qDebug() << "No notes found in session file";
     }
+    qDebug() << "=======================";
 }
